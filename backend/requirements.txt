@@ -1,0 +1,13 @@
+# Factora backend - runtime dependencies (fresh N0 list)
+#
+# Install:  cd backend && python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+
+# --- API -----------------------------------------------------------------
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3,<3.0
+
+# --- Sponsor: neatlogs (agent observability; verified via docs.neatlogs.com) ---
+# Requires Python >=3.10,<3.14 per the SDK docs.
+neatlogs>=0.1.0

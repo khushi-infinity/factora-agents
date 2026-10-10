@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+norecursedirs = [".venv", "__pycache__"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally import inside fixtures/functions to control env state.
+"tests/*" = ["PLC0415"]

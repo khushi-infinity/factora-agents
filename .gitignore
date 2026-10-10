@@ -1,0 +1,34 @@
+# ───────────── Secrets ─────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+secrets.json
+
+# ───────────── Dependencies ─────────────
+node_modules/
+.venv/
+
+# ───────────── Builds / caches ─────────────
+dist/
+coverage/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.tsbuildinfo
+
+# ───────────── Runtime data (N1+ generates real content) ─────────────
+data/raw/*
+data/generated/*
+!data/raw/.gitkeep
+!data/generated/.gitkeep
+*.db
+*.sqlite3
+
+# ───────────── Logs / OS ─────────────
+*.log
+.DS_Store
+Thumbs.db

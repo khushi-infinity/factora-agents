@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens (N0) — derived from the mockups in docs/design/mockups/.
+ * Binding design language: navy sidebar, light content surface, blue accent,
+ * one meaning per state colour. Full spec lives in docs/design/ once written;
+ * this file only bootstraps the tokens as CSS custom properties.
+ */
+:root {
+  --factora-navy: #0f1f33;      /* sidebar */
+  --factora-surface: #f6f8fb;   /* content surface */
+  --factora-accent: #2563eb;    /* blue primary */
+  --state-healthy: #16a34a;     /* green */
+  --state-warning: #d97706;     /* amber */
+  --state-critical: #dc2626;    /* red */
+  --state-maintenance: #546e8f; /* blue/gray */
+  --state-offline: #9ca3af;     /* gray */
+}
+
+body {
+  margin: 0;
+  background: var(--factora-surface);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}

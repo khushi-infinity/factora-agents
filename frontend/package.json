@@ -1,0 +1,16 @@
+{
+  "name": "factora-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Factora frontend (neatHack N0 scaffold: shell + health check only)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  }
+}
