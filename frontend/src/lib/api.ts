@@ -59,3 +59,31 @@ export async function getJson<T>(path: string, timeoutMs = 5000): Promise<T> {
 export function fetchHealth(): Promise<HealthPayload> {
   return getJson<HealthPayload>('/api/health')
 }
+
+export async function postJson<T>(path: string, body: unknown, timeoutMs = 10000): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+
+    if (!response.ok) {
+      throw new ApiError(`Request failed: ${response.status} ${response.statusText}`, response.status)
+    }
+
+    return (await response.json()) as T
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new ApiError(`Request to ${path} timed out after ${timeoutMs} ms`)
+    }
+    throw new ApiError(error instanceof Error ? error.message : `Unknown error calling ${path}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}

@@ -27,10 +27,10 @@ scaffold session with the initial commit — the compliance story judges can ver
 
 | Check | Result |
 |---|---|
-| `entire status` | ✅ Enabled on branch `main` |
+| `entire status` | ✅ Enabled on branch `main` (re-verified at N1: "Checkpoints sync to: origin") |
 | Git hooks | ✅ installed and OK per `entire doctor` |
 | Codex-discovered hooks | ✅ installed; ⚠ trust approval pending (user action, below) |
-| First checkpoint | ⏳ `entire checkpoint list` shows 0 after the N0 commit — the commit was created before a hooked agent session had accumulated activity; the first *linked* checkpoint is expected at the N1 commit. Command to verify: `entire checkpoint list` |
+| Checkpoints | ⏳ `entire checkpoint list` still shows **0 after the N1 commit** (verified 2026-10-10). Honest diagnosis: checkpoints materialise when Entire's commit hook runs *inside a supported agent session* (Claude Code / Codex / Cursor …). This workspace is driven by the Freebuff desktop app, whose commit flow does not currently trip Entire's post-commit session capture; Entire itself reports no failure (`doctor` clean). Capturing a real checkpoint needs either a session from one of the hooked agents or the `entire login` + Codex `/hooks` approval user actions below. Recorded per task rule §18: no checkpoint identifier is invented. Command to verify: `entire checkpoint list` |
 
 ## What artefact/checkpoint evidence we will capture later
 

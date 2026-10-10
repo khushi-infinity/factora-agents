@@ -1,4 +1,5 @@
 import BackendStatus from './components/BackendStatus'
+import FactoryStatus from './components/FactoryStatus'
 
 /**
  * N0 shell only: proves the design-system tokens bootstrap and the SPA can
@@ -29,11 +30,13 @@ export default function App() {
       <main className="flex-1 p-6">
         <div className="mx-auto max-w-3xl space-y-5">
           <BackendStatus />
+          <FactoryStatus />
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-semibold text-slate-800">Milestone status</h2>
             <p className="mt-2 text-xs leading-relaxed text-slate-600">
-              Fresh neatHack scaffold. Design tokens from docs/design/mockups are bootstrapped in
-              src/index.css; the digital twin, agents, and product pages do not exist yet.
+              N1: deterministic FactoryWorld (SQLite, fresh implementation). Agents, digital twin
+              visuals, and product pages do not exist yet — this panel proves the world API is
+              wired.
             </p>
           </section>
         </div>

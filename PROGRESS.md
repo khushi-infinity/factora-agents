@@ -1,14 +1,42 @@
 # PROGRESS.md — Factora (neatHack 2026) Build State
 
 **Hackathon:** neatHack 2026
-**Current milestone:** N0
-**Current goal:** fresh repository + sponsor foundations + green scaffold
-**Repo:** local `/Users/khushisarawagi/Desktop/factora-agents` (GitHub push pending — see Blockers)
+**Current milestone:** N0 + N1 complete (pushed after N0; N1 commit pending push)
+**Current goal:** N2 — operational APIs + visual Factory Digital Twin
+**Repo:** https://github.com/khushi-infinity/factora-agents (pushed at N0)
 **Rule:** update this file (and `docs/BUILD_LOG.md`) at the end of every completed milestone.
 
 ---
 
 ## Completed
+
+### N1 — deterministic FactoryWorld and local factory state ✅
+
+- [x] **SQLite world layer (no ORM, FK-enforced)**: machines, capabilities, sensor_readings,
+      production_jobs, maintenance_history, spare_parts, work_orders, downtime_events, incidents,
+      actions, world_state, seed_audit — 23 machines, 3,312 telemetry rows, 16 production jobs,
+      8 parts, 10 maintenance records, 4 work orders, 3 downtime events per seed.
+- [x] **Determinism proved**: per-domain SHA-256 RNG streams, fixed epoch 2026-10-05 06:00
+      (persisted clock, 10-min ticks, never the wall clock); reseed digest
+      `76d28cc593b3` stable across `scripts/seed_local.py --verify` runs; test-pinned.
+- [x] **CNC-03 flagship recreated fresh**: 24-h monotonic ramp vibration 2.4→≈5.0 mm/s,
+      bearing temp 62→70.7 °C; seeded state WARNING so the live advance walks
+      WARNING→CRITICAL and opens deterministic incident `INC-20261005-001` with an evidence
+      pack (telemetry + 2 prior BRG-AX-17 repairs + stock 2 ≤ reorder 3).
+- [x] **Economics**: downtime-loss, scrap-loss and type-restricted reroute feasibility as pure
+      functions over stored demo economics (output/hour, cost/hour, margin per unit, scrap cost).
+- [x] **FactoryWorld service API** (`get_factory_snapshot`, `get_machine`, `get_recent_telemetry`,
+      `get_machine_history`, `get_spare_part`, `get_compatible_machines`, `get_open_work_orders`,
+      `get_active_incidents`, `advance`, `reset_world`, `compute_downtime_loss`,
+      `compute_scrap_loss`) — agents (N3) will call this, never SQL.
+- [x] **API**: GET /api/factory · /api/machines · /api/machines/{id} · /api/machines/{id}/telemetry
+      · /api/incidents · POST /api/demo/reset · POST /api/demo/advance — all typed, all tested.
+- [x] **Frontend proof panel**: FactoryWorld snapshot (state distribution, sim clock, incidents)
+      + Reset/Advance buttons in the existing design language; no twin visuals yet (N2).
+- [x] **Gates**: backend ruff clean + **53 tests passed** (24 N0 + 18 world + 11 factory API);
+      frontend typecheck/lint clean, **6 tests**, build OK; seed --verify determinism VERIFIED;
+      live uvicorn smoke of all endpoints; zero Snowflake/Cortex/CoCo references; no LLM calls,
+      no agents, no fabricated neatlogs traces.
 
 ### N0 — fresh repository + sponsor foundations + green scaffold ✅
 
@@ -49,13 +77,12 @@
 
 ## Next 3 (do NOT start without instruction)
 
-1. **N1 — deterministic FactoryWorld + SQLite + fresh factory data.** Simulation tick loop, machines,
-   telemetry, maintenance history, parts, production; deterministic seeding; first `/api/world`
-   endpoints. New CNC-03-equivalent anomaly script written fresh.
-2. **N2 — digital twin + operational APIs / UI foundation.** The 3D/2.5D twin page, machine state
-   colours, `/api` operational surfaces feeding it.
-3. **N3 — first autonomous detect → investigate → act → verify loop.** Agent runtime + neatlogs
-   instrumented spans + Watcher/Coordinator/Maintenance minimum viable loop.
+1. **N2 — operational APIs + visual Factory Digital Twin.** The twin centrepiece per the mockup
+   (navy sidebar, light panels, state colours), machine placements from the DB, state transitions
+   live as the scenario advances; richer operational endpoints as the twin needs them.
+2. **N3 — first autonomous detect → investigate → act → verify loop.** Agent runtime + neatlogs
+   instrumented spans + Watcher/Coordinator/Maintenance minimum viable loop over the N1 world.
+3. **N4 — production + finance agents, approvals, reroute flow** (per plan §K).
 
 ## Blockers
 
@@ -75,13 +102,16 @@
 | Gate | State | Evidence |
 |---|---|---|
 | Backend lint | ✅ | `cd backend && .venv/bin/ruff check .` → All checks passed! |
-| Backend tests | ✅ | `cd backend && .venv/bin/pytest` → **24 passed**, 1 warning (Starlette httpx2 advisory) |
+| Backend tests | ✅ | `cd backend && .venv/bin/pytest` → **53 passed** (24 N0 + 18 world + 11 factory API), 1 warning |
 | Frontend typecheck | ✅ | `npm run typecheck` → no findings |
 | Frontend lint | ✅ | `npm run lint` → no findings |
-| Frontend tests | ✅ | `npm test` → **4 passed** (2 files) |
-| Frontend build | ✅ | `npm run build` → built in ~110 ms, three.js in separate vendor chunk |
+| Frontend tests | ✅ | `npm test` → **6 passed** (3 files) |
+| Frontend build | ✅ | `npm run build` → built in ~101 ms |
+| Seed determinism | ✅ | `python3.11 scripts/seed_local.py --verify` → Determinism: VERIFIED (digest 76d28cc593b3) │ Calibration rows: 23 machines / 3,312 telemetry / 16 jobs / 8 parts │ CNC-03 scenario: VERIFIED │ Validation: PASS |
+| Scenario runner | ✅ | `python3.11 scripts/run_demo_scenario.py` → T+30→T+120 walk, CNC-03 CRITICAL, incident INC-20261005-001 |
+| Live API smoke | ✅ | uvicorn → GET /api/factory 23 machines · POST advance 30 → CRITICAL · POST reset → reset |
 | neatlogs SDK doctor (local) | ✅ | `python -m neatlogs doctor --local --json` → pass, v1.4.26, doctor/v2, schema 2 |
-| neatlogs doctor (probe) | ⏳ | awaits NEATLOGS_API_KEY |
+| neatlogs doctor (probe) | ⏳ | awaits NEATLOGS_API_KEY (unchanged at N1; no fake traces — agents don't exist yet) |
 | Snowflake/Cortex/CoCo grep | ✅ | 0 matches in app code/docs (PROVENANCE.md historical mention only) |
 | Entire initialised | ✅ | `entire status` → active, hooks installed (see docs/EVIDENCE/entire/README.md) |
 
@@ -95,5 +125,7 @@
 
 ## Demo Status
 
-- **Not demo-able**: health check + shell only. First demo-able point: N1/N2 (world + twin).
+- **Partially demo-able (environment level)**: the factory world + reset/advance buttons work;
+  `python3.11 scripts/run_demo_scenario.py` prints the CNC-03 degradation arc. No twin visuals,
+  no agents. First richly demo-able point: N2 (twin). First autonomous loop: N3.
 - **Judge-ready point**: N7 per plan §K (deterministic flagship scenario + evidence pack).

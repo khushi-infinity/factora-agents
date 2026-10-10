@@ -6,8 +6,10 @@ Factora is an autonomous factory operating system built around a digital twin an
 agents. Agents observe simulated factory telemetry, investigate anomalies, coordinate decisions,
 take controlled actions, and verify the factory actually improved — every step traced.
 
-**Status: Milestone N0 — fresh scaffold.** Health endpoint + frontend shell + sponsor foundations
-only. No factory simulation, no agents, no ML, no product pages yet — see [PROGRESS.md](./PROGRESS.md).
+**Status: Milestone N1 — deterministic FactoryWorld.** A SQLite-backed simulated factory
+(23 machines, telemetry, production, parts, work orders, incidents) with a simulation clock and
+reset/advance demo controls. No agents, no ML, no digital-twin visuals yet — see
+[PROGRESS.md](./PROGRESS.md).
 
 ## Fresh-code disclosure
 
@@ -38,7 +40,11 @@ cd backend
 python3.11 -m venv .venv
 .venv/bin/pip install -r requirements.txt -r requirements-dev.txt
 .venv/bin/uvicorn app.main:app --reload --port 8000
-# health: http://127.0.0.1:8000/api/health
+# health: http://127.0.0.1:8000/api/health · factory: /api/factory
+
+# Seed / inspect the deterministic factory world
+python3.11 scripts/seed_local.py            # reset + seed + validate (add --verify for digest proof)
+python3.11 scripts/run_demo_scenario.py     # print the CNC-03 degradation arc (no agents)
 
 # Frontend — Vite on :5173 (proxies /api to :8000)
 cd frontend
@@ -55,6 +61,9 @@ is set in the environment; without it the app runs normally with observability d
 cd backend && .venv/bin/ruff check . && .venv/bin/pytest
 cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 ```
+
+Demo beat level: the scenario runner and the Reset/Advance buttons in the UI walk CNC-03 from
+warning to critical and open a deterministic incident — no agents involved until N3.
 
 ## Documents
 
