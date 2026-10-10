@@ -1,4 +1,4 @@
-"""Typed payloads for the N1 factory API (fresh implementation)."""
+"""Typed payloads for the factory API (fresh implementation; N2 additions below)."""
 
 from __future__ import annotations
 
@@ -62,6 +62,62 @@ class FactorySnapshot(BaseModel):
     machine_count: int
     state_distribution: dict[str, int]
     open_incidents: list[IncidentOut]
+
+
+class MaintenanceOut(BaseModel):
+    event_id: int
+    machine_id: str
+    event_date: str
+    issue: str
+    action: str
+    part_id: str | None = None
+    downtime_hours: float
+    cost_usd: float | None = None
+
+
+class WorkOrderOut(BaseModel):
+    work_order_id: str
+    machine_id: str
+    issue: str
+    proposed_action: str
+    status: str
+    priority: str
+    scheduled_for: str | None = None
+    estimated_cost_usd: float | None = None
+    source: str
+    created_at: str
+
+
+class ProductionJobOut(BaseModel):
+    job_id: str
+    part_no: str
+    machine_id: str
+    target_qty: int
+    produced_qty: int
+    good_qty: int
+    scrap_qty: int
+    status: str
+    started_at: str | None = None
+    due_at: str | None = None
+    priority: int
+
+
+class LineOut(BaseModel):
+    line: str
+    machine_ids: list[str]
+    machine_count: int
+
+
+class MachineContext(BaseModel):
+    """One-stop contextual payload for the Machine Inspector (plan §14)."""
+
+    machine: MachineDetail
+    telemetry: list[TelemetryOut] = Field(description="recent readings, oldest → newest")
+    maintenance: list[MaintenanceOut]
+    work_orders: list[WorkOrderOut]
+    production: list[ProductionJobOut]
+    incidents: list[IncidentOut]
+    economics_note: Literal["Synthetic demo economics"] = "Synthetic demo economics"
 
 
 class ResetResponse(BaseModel):

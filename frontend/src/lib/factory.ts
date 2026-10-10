@@ -1,6 +1,6 @@
 /**
- * Typed client for the N1 FactoryWorld API. Same rules as api.ts: typed,
- * time-boxed, no data fabrication. Fresh implementation.
+ * Typed client for the FactoryWorld API (N1 reads + N2 context). Same rules as
+ * api.ts: typed, time-boxed, no data fabrication. Fresh implementation.
  */
 import { getJson, postJson } from './api'
 
@@ -48,4 +48,105 @@ export function advanceSimulation(minutes: number): Promise<AdvanceResult> {
 
 export function resetSimulation(): Promise<ResetResult> {
   return postJson<ResetResult>('/api/demo/reset', {})
+}
+
+// ── N2: machine inventory + contextual Inspector payloads ─────────────
+
+export interface TwinMachine {
+  machine_id: string
+  name: string
+  machine_type: string
+  line: string
+  state: 'HEALTHY' | 'WARNING' | 'CRITICAL' | 'MAINTENANCE' | 'OFFLINE'
+  health_score: number | null
+  x_m: number
+  y_m: number
+  z_m: number
+}
+
+export interface TelemetryPoint {
+  machine_id: string
+  ts: string
+  vibration_mm_s: number
+  bearing_temp_c: number
+  spindle_rpm: number | null
+  motor_current_a: number | null
+  cycle_time_s: number | null
+  production_rate_uph: number | null
+  defect_rate_pct: number | null
+}
+
+export interface MaintenanceRecord {
+  event_id: number
+  machine_id: string
+  event_date: string
+  issue: string
+  action: string
+  part_id: string | null
+  downtime_hours: number
+  cost_usd: number | null
+}
+
+export interface WorkOrder {
+  work_order_id: string
+  machine_id: string
+  issue: string
+  proposed_action: string
+  status: string
+  priority: string
+  scheduled_for: string | null
+  estimated_cost_usd: number | null
+  source: string
+  created_at: string
+}
+
+export interface ProductionJob {
+  job_id: string
+  part_no: string
+  machine_id: string
+  target_qty: number
+  produced_qty: number
+  good_qty: number
+  scrap_qty: number
+  status: string
+  started_at: string | null
+  due_at: string | null
+  priority: number
+}
+
+export interface MachineContext {
+  machine: TwinMachine & {
+    manufacturer: string | null
+    model: string | null
+    installed_year: number | null
+    output_per_hour: number
+    cost_per_hour_usd: number
+    contribution_per_unit_usd: number
+    scrap_cost_per_unit_usd: number
+    latest_telemetry: TelemetryPoint | null
+  }
+  telemetry: TelemetryPoint[]
+  maintenance: MaintenanceRecord[]
+  work_orders: WorkOrder[]
+  production: ProductionJob[]
+  incidents: Incident[]
+  economics_note: 'Synthetic demo economics'
+}
+
+export interface FactoryLine {
+  line: string
+  machine_ids: string[]
+  machine_count: number
+}
+
+export function fetchMachines(): Promise<TwinMachine[]> {
+  return getJson<TwinMachine[]>('/api/machines')
+}
+
+export function fetchMachineContext(machineId: string): Promise<MachineContext> {
+  return getJson<MachineContext>(`/api/machines/${encodeURIComponent(machineId)}/context`)
+}
+
+export function fetchLines(): Promise<FactoryLine[]> {
+  return getJson<FactoryLine[]>('/api/factory/lines')
 }

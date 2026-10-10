@@ -6,10 +6,10 @@ Factora is an autonomous factory operating system built around a digital twin an
 agents. Agents observe simulated factory telemetry, investigate anomalies, coordinate decisions,
 take controlled actions, and verify the factory actually improved — every step traced.
 
-**Status: Milestone N1 — deterministic FactoryWorld.** A SQLite-backed simulated factory
+**Status: Milestone N2 — visual Factory Digital Twin.** A SQLite-backed simulated factory
 (23 machines, telemetry, production, parts, work orders, incidents) with a simulation clock and
-reset/advance demo controls. No agents, no ML, no digital-twin visuals yet — see
-[PROGRESS.md](./PROGRESS.md).
+reset/advance demo controls, plus a browser 3D floor at `/twin` (and a Command Center at `/`)
+driven entirely by the backend. **No agents, no ML yet** — see [PROGRESS.md](./PROGRESS.md).
 
 ## Fresh-code disclosure
 
@@ -20,7 +20,7 @@ code was copied. See [docs/PROVENANCE.md](./docs/PROVENANCE.md).
 
 ## Stack
 
-- **Frontend:** React 19 + Vite + TypeScript + Tailwind CSS 4 (+ Recharts, three.js / React Three Fiber installed for later milestones)
+- **Frontend:** React 19 + Vite + TypeScript + Tailwind CSS 4, React Router, Recharts, three.js / React Three Fiber / Drei (Factory Digital Twin)
 - **Backend:** FastAPI + Python 3.11 + Pydantic v3
 - **Sponsors:** neatlogs (agent observability) · Entire (coding-session checkpoints) · cfo.ai (business-plan modelling)
 
@@ -62,8 +62,10 @@ cd backend && .venv/bin/ruff check . && .venv/bin/pytest
 cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 ```
 
-Demo beat level: the scenario runner and the Reset/Advance buttons in the UI walk CNC-03 from
-warning to critical and open a deterministic incident — no agents involved until N3.
+Demo beat level: open `/twin`, select **CNC-03**, press **Advance +30 min** — the machine turns
+amber → red with a one-shot pulse, the state distribution changes, and a deterministic incident
+appears; **Reset** restores the start. No agents involved until N3. Visual checklist:
+[docs/EVIDENCE/demo/manual-twin-checklist.md](./docs/EVIDENCE/demo/manual-twin-checklist.md).
 
 ## Documents
 
@@ -71,5 +73,6 @@ warning to critical and open a deterministic incident — no agents involved unt
 - [AGENTS.md](./AGENTS.md) — operating rules for coding agents
 - [docs/PROVENANCE.md](./docs/PROVENANCE.md) — fresh-code disclosure
 - [docs/BUILD_LOG.md](./docs/BUILD_LOG.md) — milestone-by-milestone build record (judging evidence)
+- [docs/EVIDENCE/demo/manual-twin-checklist.md](./docs/EVIDENCE/demo/manual-twin-checklist.md) — manual visual verification of `/twin`
 - [docs/design/mockups/](./docs/design/mockups/) — the ten design reference screens
 - [docs/BUSINESS_PLAN.md](./docs/BUSINESS_PLAN.md) — cfo.ai business plan (not yet modelled)

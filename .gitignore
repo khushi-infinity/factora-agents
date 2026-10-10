@@ -32,3 +32,17 @@ data/generated/*
 *.log
 .DS_Store
 Thumbs.db
+
+# ───────────── Local agent-hook config (`entire enable --agent`) ─────────────
+# Per-developer hook wiring for coding agents. Not part of the submitted
+# product: `.entire/settings.json` (tracked) is the shared Entire config, and
+# `entire agent add <name>` regenerates these. `.github/hooks/` is ignored
+# specifically so any future `.github/workflows/` CI stays committable.
+.claude/
+.codex/
+.cursor/
+.factory/
+.gemini/
+.pi/
+.opencode/plugins/entire.ts
+.github/hooks/

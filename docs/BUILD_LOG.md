@@ -187,3 +187,171 @@ cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 
 - N1 complete: deterministic world, no agents, no LLMs, no fake traces
   (observability module untouched since N0 — per task rule §17).
+
+---
+
+## N2 pre-flight — documentation reconciliation (honest corrections)
+
+- **Stale push blockers removed from PROGRESS.md.** N1 was pushed before the N1 report was even
+  printed; PROGRESS.md still claimed "N1 commit pending push" + "GitHub repo creation pending".
+  Corrected: `origin/main` = `7df8fbb` (VERIFIED via `git ls-remote`) and the GitHub blocker is
+  marked resolved. No seed/test data was changed to accommodate the text — files, not claims, are
+  the source of truth.
+- **Machine state accounting check.** Verified against the seeded database: 23 machines total →
+  seeded HEALTHY 19 / WARNING 2 (CNC-03, CNC-06) / MAINTENANCE 1 (PRS-03) / OFFLINE 1 (PKG-03);
+  after the scenario advance CNC-03 flips WARNING→CRITICAL giving 19/1/1/1/1 = 23. Earlier prose
+  experiments in the session ("22 machines minus offline") were never committed as facts; the
+  committed docs (N1 sections of PROGRESS/BUILD_LOG) already said 23 machines — verified correct,
+  no numeric correction needed, only the resolution note recorded here.
+- **CWD-safety rule adopted** for N2: every write in this milestone uses an absolute path under
+  `/Users/khushisarawagi/Desktop/factora-agents/`; commands carry explicit cwd (drift was observed
+  again at session start: pwd resolved to the OLD repo; corrected before any write).
+
+---
+
+## N2 — interactive Factory Digital Twin and operational UI
+
+### How this milestone actually started (rule 11 — record failures, don't hide them)
+
+- **N2 was found half-done and uncommitted.** When OpenCode took the milestone over, the working
+  tree above `7df8fbb` already contained 11 modified tracked files plus 7 untracked N2 sources
+  (`frontend/src/routes/`, `frontend/src/components/twin/`, `frontend/src/lib/twin.ts`, …) left by
+  a previous coding agent that never committed.
+- **Safety backup first, before touching a single N2 file:**
+  ```bash
+  git diff > /tmp/factora-n2-before-opencode.patch                 # 746 lines
+  git ls-files --others --exclude-standard > /tmp/factora-n2-untracked-files.txt   # 15 paths
+  tar -czf /tmp/factora-n2-untracked-backup/untracked.tgz -T /tmp/factora-n2-untracked-files.txt
+  ```
+  Both artefacts live outside the repository and are not committed.
+- **Audit, not restart.** The candidate work was read end to end (backend routes + schemas +
+  tests, router wiring, `lib/factory.ts`, `twin.ts`, `TwinScene`, `MachineInspector`,
+  `CommandCenter`) and compared with `docs/design/mockups/01/02/04`. Good code was kept; the
+  problems below were fixed in place. No wholesale rewrite.
+
+### What was kept from the previous agent
+
+- Backend: `GET /api/factory/lines`, `/machines/{id}/context`, `/maintenance`, `/work-orders`,
+  `/production` with typed Pydantic models and 8 new TestClient tests (19 in
+  `test_factory_api.py`).
+- Frontend: react-router wiring (`App.tsx`, `main.tsx`), `lib/factory.ts` machine/context client,
+  `lib/twin.ts` pure helpers, `TwinScene` three.js scene, `MachineInspector` Recharts panel,
+  `CommandCenter`, `TwinPage`, and the lazy-loading + error-boundary policy.
+
+### Fixes applied during the audit
+
+1. **Inspector/selection desynced on load.** `TwinPage` pre-selected CNC-03 in the scene but never
+   fetched its context, so the inspector said "Select a machine" while the floor highlighted one.
+   The initial load now resolves CNC-03's context too.
+2. **Lane geometry was wrong.** `FloorLanes` computed a lane width from `max(x) + footprint*scale`
+   and pinned the left edge at a constant, so on the real 5-line layout most machines fell outside
+   their lane. Replaced with the pure, unit-tested `lanesFor()` which bounds each lane by the
+   min/max scene x of *that line's* machines.
+3. **Machine bodies overlapped.** Positions scale with the world (5 m pitch → 7.43 scene units)
+   while body/plinth sizes were fixed at 7/9.45 — plinths collided. Added `footprintFor()` which
+   derives body size from the smallest same-line gap (→ 5.2 here), test-pinned.
+4. **One shared chart axis flattened vibration.** Vibration (~5 mm/s) and bearing temperature
+   (~70 °C) were plotted on the same Y axis, so the vibration trend was a flat line at the bottom.
+   Split into two charts (also matches mockup 04).
+5. **Perpetual spin on the selected machine.** Replaced with a static blue selection ring +
+   recoloured body — the one-shot state-change pulse remains, no continuous animation.
+6. **Duplicated route logic.** `machines()`, `machine_detail()` and the three sub-resource routes
+   each re-mapped the same dicts and re-raised the same 404. Factored `_require_machine`,
+   `_machine_out`, `_machine_detail`, `_incident_out`, `_telemetry_rows` and one row-reader per
+   resource; `/context` now composes those exact readers, so the aggregated and split endpoints
+   cannot drift.
+7. **Dead/nonsense code removed:** `twinReadiness()` (tautological `hasCriticalPath`, never
+   called), `activeIncidentFor()` (only ever exercised by its own test), `fetchIncidents()` and a
+   dead `_ = Clock` import guard in `factory.py`. `machines()` now reuses `_machine_out`.
+8. **`frontend/package.json` had no `dependencies` block at `7df8fbb`** while
+   `package-lock.json` did — a fresh `npm ci` on the committed tree would have failed. Installing
+   `react-router` restored the whole manifest; `npm ls --depth=0` is clean (26 packages).
+9. **Sidebar honesty:** the N1 pill read `Degraded: 3/10 pages` (misleading wording for a
+   progress count) → now `3 / 10 pages`.
+
+### N2 additions beyond the recovered work
+
+- **Line rail** above the canvas driven by `GET /api/factory/lines` — this is what gives that
+  endpoint a real consumer: click a line to dim the rest of the floor (§6 production-line
+  distinction).
+- **WebGL resilience** (`§14`): `webglAvailable()` probe → non-WebGL browsers get
+  `TwinFallback`, a per-line floor table of all 23 machines; the error boundary renders the same
+  fallback if the canvas throws. Loading states everywhere.
+- **Page-level incident strip** so the CNC-03 incident is visible without selecting anything.
+- **Legend counts** from `snapshot.state_distribution`; **"Needs attention"** section on the
+  Command Center listing WARNING/CRITICAL machines.
+- **Inspector:** work-orders section, empty states for maintenance/jobs, consistent 384 px rail.
+- **Tests:** `TwinPage.test.tsx` (renders the whole shell in jsdom — header, sim clock, scenario
+  controls, line rail, legend, all 23 machines through the fallback table, and CNC-03's inspector
+  with `Synthetic demo economics` + both charts). `twin.test.ts` gained `footprintFor`,
+  `lanesFor`, `lineLabel`, `STATE_ORDER` coverage and lost the two dead-code suites.
+
+### Agent-hook directories (rule 15)
+
+`.claude/ .codex/ .cursor/ .factory/ .gemini/ .pi/ .opencode/plugins/entire.ts .github/hooks/`
+were inspected before staging — every one contains only `entire enable --agent` hook wiring
+(`entire hooks <agent> pre-task/post-task/session-end …`), not product code, and
+`.github/hooks/entire.json` is Entire config, **not** CI. Decision: add explicit `.gitignore`
+entries for exactly those paths (`.github/hooks/` only — `.github/workflows/` stays committable
+if CI is added later), and commit none of them. `.entire/settings.json` (the shared Entire config)
+remains tracked as at N0. `git add -A` was **not** used.
+
+### Commands run (gates — actual output at N2 close)
+
+```bash
+cd /Users/khushisarawagi/Desktop/factora-agents/backend
+.venv/bin/ruff check .                       # All checks passed!
+.venv/bin/pytest                             # 61 passed, 1 warning in 51.73s
+
+cd ../frontend
+npm run typecheck                            # no findings
+npm run lint                                 # no findings
+npm test                                     # 21 passed (6 files)
+npm run build                                # ✓ built in 511 ms
+npm ls --depth=0                             # 26 packages, none missing/invalid
+
+cd ..
+python3.11 scripts/seed_local.py --verify    # Determinism: VERIFIED (digest 76d28cc593b3)
+                                             # CNC-03 scenario: VERIFIED · Validation: PASS
+python3.11 scripts/run_demo_scenario.py      # T+30 → CRITICAL, incident INC-20261005-001
+git diff --check                             # clean (no whitespace errors)
+
+# live API smoke against uvicorn :8000
+GET  /api/factory/lines        → 5 lines (Assembly 5, CNC 8, Packaging 3, Press 4, Quality 3) = 23
+GET  /api/machines             → 23, CNC-03 {state WARNING, health 63, x 16, y 18}
+GET  /api/machines/CNC-03/context → 7 keys, 36 telemetry, 3 maintenance, 1 work order,
+                                   2 jobs, 0 incidents, economics_note "Synthetic demo economics"
+POST /api/demo/advance {30}    → clock 06:30, cnc03_state CRITICAL, open_incidents 1
+     /api/factory after        → 19/1/1/1/1 = 23, INC-20261005-001 BEARING_DEGRADATION
+POST /api/demo/reset {}        → clock 06:00, 23 machines, 3,312 telemetry rows
+     /api/factory after        → 19/2/0/1/1 = 23, 0 incidents
+```
+
+Test totals **changed**: backend 53 → **61**, frontend 6 → **21** (3 → 6 files). The old numbers
+are left in the N1 section above because they were true at N1.
+
+### Visual verification — not claimed (rule: never claim unbuilt/unverified)
+
+Browser tooling exists in this environment but **no desktop browser is connected to the session**
+(`browser.tabs.open` → `browser.disconnected`, twice), so no screenshot or pixel-level check was
+performed. Instead of asserting a visual result we did not observe, a step-by-step manual
+checklist was written to **`docs/EVIDENCE/demo/manual-twin-checklist.md`** for the user to run.
+What *was* verified mechanically: the full scenario through the HTTP API (above), and the
+complete `/twin` DOM in jsdom including the no-WebGL fallback path.
+
+### Entire (rule 18)
+
+```bash
+entire status            # ● Enabled · branch main · 8 agents · 7 Codex hooks need approval
+entire checkpoint list   # checkpoints 0 — "No checkpoints found on this branch."
+```
+**Zero checkpoints.** No identifier is invented. OpenCode drives this session and Entire's
+auto-generated `.opencode/plugins/entire.ts` fails to load on OpenCode v2.0.19, so session capture
+never registers; recorded in `docs/EVIDENCE/entire/README.md`.
+
+### Result
+
+N2 complete: a genuine visual twin at `/twin`, backend-driven placement and state, working
+inspector with real telemetry and charts, working Reset/Advance with the CNC-03
+WARNING → CRITICAL arc and a visible incident, docs reconciled. No agents, no ML, no LLM calls,
+no fabricated traces — N3 not started.

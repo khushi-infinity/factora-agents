@@ -15,6 +15,7 @@ export default defineConfig({
       '/api': { target: apiTarget, changeOrigin: true },
     },
   },
+  // SPA history fallback: /twin etc. resolve in the dev server and preview.
   preview: { port: 4173 },
   build: {
     outDir: 'dist',
@@ -30,6 +31,7 @@ export default defineConfig({
           if (id.includes('react-dom') || id.includes('react/') || id.includes('scheduler')) {
             return 'react-vendor'
           }
+          if (id.includes('react-router')) return 'router'
           return undefined
         },
       },

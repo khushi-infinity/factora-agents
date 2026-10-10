@@ -1,14 +1,46 @@
 # PROGRESS.md — Factora (neatHack 2026) Build State
 
 **Hackathon:** neatHack 2026
-**Current milestone:** N0 + N1 complete (pushed after N0; N1 commit pending push)
-**Current goal:** N2 — operational APIs + visual Factory Digital Twin
-**Repo:** https://github.com/khushi-infinity/factora-agents (pushed at N0)
+**Current milestone:** N0 + N1 + N2 complete and pushed to `origin/main` (N1 = `7df8fbb`; N2 hash in `git log`)
+**Current goal:** N3 — first autonomous detect → investigate → act → verify loop (awaiting instruction)
+**Repo:** https://github.com/khushi-infinity/factora-agents
 **Rule:** update this file (and `docs/BUILD_LOG.md`) at the end of every completed milestone.
 
 ---
 
 ## Completed
+
+### N2 — operational APIs + visual Factory Digital Twin ✅
+
+- [x] **`/twin` is a real visual twin, not a card wall.** React Three Fiber + Drei canvas occupies
+      the main workspace; machines are placed from FactoryWorld `x_m/y_m/z_m` (no hardcoded
+      positions), procedural box geometry per machine type, no downloaded models.
+- [x] **Factory organisation**: one floor lane per production line (Assembly, CNC, Press,
+      Packaging, Quality) with pastel tint + label, derived from where that line's machines
+      actually are; a line rail above the canvas (`GET /api/factory/lines`) filters the floor.
+- [x] **Interaction**: hover tooltip (id · state · health), click to select (blue ring + recoloured
+      body), floor click clears selection, one-shot pulse when a machine's state changes.
+- [x] **Machine Inspector** (right rail) from `GET /api/machines/{id}/context`: identity, latest
+      telemetry, separate Recharts **vibration** and **temperature** trend charts (a shared axis
+      would flatten vibration), economics labelled `Synthetic demo economics`, jobs, maintenance
+      history, work orders, and any open incident prominently.
+- [x] **CNC-03 flagship works end to end**: Reset → WARNING → Advance +30 min → **CRITICAL**,
+      distribution 19/2/0/1/1 → 19/1/1/1/1, incident `INC-20261005-001` appears in a page-level
+      incident strip and in the inspector; Reset restores the deterministic start — all without a
+      page reload.
+- [x] **Scenario controls**: Reset / +10 / +30 / +60 min only (the steps the backend supports),
+      authoritative sim clock in the header — never the wall clock.
+- [x] **Command Center (`/`)** secondary to the twin: machine count, state distribution, sim time,
+      CNC-03 state, a "Needs attention" list of WARNING/CRITICAL machines, and links into `/twin`.
+      No invented metrics.
+- [x] **WebGL resilience**: capability probe + error boundary + `TwinFallback`, which renders the
+      same FactoryWorld data as a per-line floor table if the canvas cannot start.
+- [x] **New/kept endpoints** (typed, FactoryWorld-sourced, tested): `GET /api/factory/lines`,
+      `GET /api/machines/{id}/context`, `/maintenance`, `/work-orders`, `/production`. The
+      collection routes and `/context` now share one row-reader each so they cannot drift.
+- [x] **Gates**: backend `ruff` clean + **61 tests**; frontend typecheck/lint clean, **21 tests
+      (6 files)**, build OK; `seed_local.py --verify` determinism VERIFIED; demo scenario prints
+      the WARNING→CRITICAL arc. No agents, no ML, no fake traces.
 
 ### N1 — deterministic FactoryWorld and local factory state ✅
 
@@ -73,59 +105,59 @@
 
 ## In Progress
 
-- **GitHub push** (see Blockers) — local commit exists; remote creation is a single command.
+- Nothing — N2 is complete. Waiting on explicit instruction to start N3.
 
 ## Next 3 (do NOT start without instruction)
 
-1. **N2 — operational APIs + visual Factory Digital Twin.** The twin centrepiece per the mockup
-   (navy sidebar, light panels, state colours), machine placements from the DB, state transitions
-   live as the scenario advances; richer operational endpoints as the twin needs them.
-2. **N3 — first autonomous detect → investigate → act → verify loop.** Agent runtime + neatlogs
+1. **N3 — first autonomous detect → investigate → act → verify loop.** Agent runtime + neatlogs
    instrumented spans + Watcher/Coordinator/Maintenance minimum viable loop over the N1 world.
-3. **N4 — production + finance agents, approvals, reroute flow** (per plan §K).
+2. **N4 — production + finance agents, approvals, reroute flow** (per plan §K).
+3. **N5+** — remaining pages and sponsor integrations per plan §K.
 
 ## Blockers
 
-- **GitHub repository creation**: `gh` CLI is authenticated (account `khushi-infinity`), but the
-  remote was deliberately **not** created during N0 to keep the first commit scope clean. Create +
-  push with:
-  ```bash
-  cd /Users/khushisarawagi/Desktop/factora-agents
-  gh repo create khushi-infinity/factora-agents --public --source . --push
-  ```
+- ~~GitHub repository creation~~ **resolved at N0-close**: `khushi-infinity/factora-agents` is
+  public on GitHub and N0+N1+N2 are pushed (`origin/main`).
 - **neatlogs API key not yet supplied** — probe mode (`doctor --probe`) and real traces remain
   unverified until a project key is provided in `.env` (gitignored). Local doctor passes; the app
   boots with observability disabled. *Not blocking any planned work.*
+- **No connected desktop browser in this environment** — the twin was verified through unit
+  tests, the non-WebGL fallback render, and a live API smoke of the CNC-03 arc. Pixel-level
+  visual verification is pending: run `docs/EVIDENCE/demo/manual-twin-checklist.md`.
 
 ## Test Status
 
 | Gate | State | Evidence |
 |---|---|---|
 | Backend lint | ✅ | `cd backend && .venv/bin/ruff check .` → All checks passed! |
-| Backend tests | ✅ | `cd backend && .venv/bin/pytest` → **53 passed** (24 N0 + 18 world + 11 factory API), 1 warning |
+| Backend tests | ✅ | `cd backend && .venv/bin/pytest` → **61 passed**, 1 warning |
 | Frontend typecheck | ✅ | `npm run typecheck` → no findings |
 | Frontend lint | ✅ | `npm run lint` → no findings |
-| Frontend tests | ✅ | `npm test` → **6 passed** (3 files) |
-| Frontend build | ✅ | `npm run build` → built in ~101 ms |
-| Seed determinism | ✅ | `python3.11 scripts/seed_local.py --verify` → Determinism: VERIFIED (digest 76d28cc593b3) │ Calibration rows: 23 machines / 3,312 telemetry / 16 jobs / 8 parts │ CNC-03 scenario: VERIFIED │ Validation: PASS |
+| Frontend tests | ✅ | `npm test` → **21 passed (6 files)** |
+| Frontend build | ✅ | `npm run build` → built in ~511 ms |
+| Determinism diff | ✅ | `git diff --check` → no whitespace errors |
+| Seed determinism | ✅ | `python3.11 scripts/seed_local.py --verify` → Determinism: VERIFIED (digest 76d28cc593b3) │ CNC-03 scenario: VERIFIED │ Validation: PASS |
 | Scenario runner | ✅ | `python3.11 scripts/run_demo_scenario.py` → T+30→T+120 walk, CNC-03 CRITICAL, incident INC-20261005-001 |
-| Live API smoke | ✅ | uvicorn → GET /api/factory 23 machines · POST advance 30 → CRITICAL · POST reset → reset |
+| Live API smoke (N2) | ✅ | uvicorn → `/api/factory/lines` 5 lines · `/api/machines/CNC-03/context` full inspector payload · advance 30 → 19/1/1/1/1 + incident · reset → 19/2/0/1/1, 0 incidents |
+| Visual verification (browser) | ⏳ | no connected desktop browser in this environment — manual checklist at `docs/EVIDENCE/demo/manual-twin-checklist.md` |
 | neatlogs SDK doctor (local) | ✅ | `python -m neatlogs doctor --local --json` → pass, v1.4.26, doctor/v2, schema 2 |
-| neatlogs doctor (probe) | ⏳ | awaits NEATLOGS_API_KEY (unchanged at N1; no fake traces — agents don't exist yet) |
+| neatlogs doctor (probe) | ⏳ | awaits NEATLOGS_API_KEY (unchanged; no fake traces — agents don't exist yet) |
 | Snowflake/Cortex/CoCo grep | ✅ | 0 matches in app code/docs (PROVENANCE.md historical mention only) |
-| Entire initialised | ✅ | `entire status` → active, hooks installed (see docs/EVIDENCE/entire/README.md) |
+| Entire enabled | ✅ | `entire status` → Enabled · branch main; `entire checkpoint list` → **0 checkpoints** (recorded honestly) |
 
 ## Sponsor Status
 
 | Sponsor | Status |
 |---|---|
 | neatlogs | ✅ foundation integrated + verified locally (doctor pass); probe/traces need a project key |
-| Entire | ✅ CLI 0.10.5 installed, repo initialised, hooks wired; first checkpoint recorded in BUILD_LOG |
+| Entire | ✅ CLI 0.10.5 installed, repo enabled on `main`, hooks wired for 8 agents; `entire checkpoint list` reports **0 checkpoints** so far |
 | cfo.ai | ⏳ not started by design — BUSINESS_PLAN.md is a placeholder (`NOT YET MODELLED IN CFO.AI`) |
 
 ## Demo Status
 
-- **Partially demo-able (environment level)**: the factory world + reset/advance buttons work;
-  `python3.11 scripts/run_demo_scenario.py` prints the CNC-03 degradation arc. No twin visuals,
-  no agents. First richly demo-able point: N2 (twin). First autonomous loop: N3.
+- **Demo-able now (N2)**: `/` Command Center with live counts, `/twin` visual factory floor with
+  23 machines on 5 labelled lines, hover/select/inspect with real telemetry and trend charts,
+  Reset/+10/+30/+60 controls, and the CNC-03 WARNING → CRITICAL transition with a visible
+  incident. `scripts/run_demo_scenario.py` prints the same arc headlessly.
+- **Not demo-able yet**: no agents (N3), no ML predictions, no finance pages.
 - **Judge-ready point**: N7 per plan §K (deterministic flagship scenario + evidence pack).
