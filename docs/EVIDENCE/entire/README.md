@@ -30,7 +30,7 @@ scaffold session with the initial commit — the compliance story judges can ver
 | `entire status` | ✅ Enabled on branch `main` |
 | Git hooks | ✅ installed and OK per `entire doctor` |
 | Codex-discovered hooks | ✅ installed; ⚠ trust approval pending (user action, below) |
-| First checkpoint | ⏳ requires the first commit (this milestone's commit) then linking the session |
+| First checkpoint | ⏳ `entire checkpoint list` shows 0 after the N0 commit — the commit was created before a hooked agent session had accumulated activity; the first *linked* checkpoint is expected at the N1 commit. Command to verify: `entire checkpoint list` |
 
 ## What artefact/checkpoint evidence we will capture later
 

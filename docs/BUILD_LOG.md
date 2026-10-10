@@ -12,10 +12,13 @@ Judging evidence for the build process. Never rewritten to look cleaner than rea
   sponsor foundations (neatlogs + Entire); FastAPI health backend; minimal frontend shell; all
   gates green; one initial commit.
 - **Coding session:** Freebuff agent session (coding agent used for the whole milestone).
-- **Entire checkpoint/session:** Entire enabled *before* the substantive scaffold code was written
-  (see `docs/EVIDENCE/entire/README.md`); the initial commit was created with Entire hooks
-  installed, so the first checkpoint links the session to commit `N0` (reference recorded in the
-  evidence README).
+- **Entire checkpoint/session:** Entire was enabled **before** substantive scaffold code was written
+  (see `docs/EVIDENCE/entire/README.md`): hooks installed, `.entire/settings.json` committed with
+  the scaffold. Honest limitation: after the first commit, `entire checkpoint list` shows 0
+  checkpoints — checkpoints only materialise when the commit is made *during* a hooked agent
+  session (the commit was made at the very start before a session had accumulated activity).
+  The next milestone's commit is the target for the first linked checkpoint. Entire's stale
+  cloud auth (`entire login` needed) is recorded as a user action in the evidence README.
 
 ### Commands run (in order)
 
