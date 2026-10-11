@@ -127,8 +127,16 @@ class FactoryWorld:
     _new_incidents_count: int = 0
 
     def _update_states(self, clock: Clock) -> None:
-        """Determinate state transitions from the latest CNC-03 telemetry."""
+        """Determinate state transitions from the latest CNC-03 telemetry.
+
+        A machine already in MAINTENANCE is left alone (N3): it has been taken
+        out of service, so advancing again must not flip it back to CRITICAL or
+        open a second incident on the same condition.
+        """
         self._new_incidents_count = 0
+        current = repo.get_machine(self.conn, SCEN_MACHINE)
+        if current and current["state"] == "MAINTENANCE":
+            return
         latest = repo.latest_reading(self.conn, SCEN_MACHINE)
         if latest is None:
             return
@@ -201,6 +209,15 @@ class FactoryWorld:
     def get_machine(self, machine_id: str) -> dict | None:
         return repo.get_machine(self.conn, machine_id)
 
+    def set_machine_state(self, machine_id: str, state: str,
+                          health_score: int | None = None) -> None:
+        """Containment writes go through the service layer, never raw SQL."""
+        repo.set_machine_state(self.conn, machine_id, state, health_score)
+
+    def pause_active_jobs(self, machine_id: str) -> list[str]:
+        """Pause the machine's RUNNING jobs and report which ones (N3)."""
+        return repo.pause_running_jobs(self.conn, machine_id)
+
     def get_recent_telemetry(self, machine_id: str, limit: int = 24) -> list[dict]:
         return repo.telemetry_history(self.conn, machine_id, limit=limit)
 
@@ -220,6 +237,51 @@ class FactoryWorld:
     def get_open_work_orders(self, machine_id: str | None = None) -> list[dict]:
         return repo.work_orders_for_machine(self.conn, machine_id or SCEN_MACHINE,
                                             open_only=True)
+
+    # ── agent-facing service surface (N3) ──────────────────────────────────
+    # The agents call these; they still never see SQL or repositories.
+    def get_work_orders(self, machine_id: str, open_only: bool = False) -> list[dict]:
+        return repo.work_orders_for_machine(self.conn, machine_id,
+                                            open_only=open_only)
+
+    def get_jobs(self, machine_id: str, status: str | None = None) -> list[dict]:
+        jobs = repo.jobs_for_machine(self.conn, machine_id)
+        return [job for job in jobs if status is None or job["status"] == status]
+
+    def get_incident(self, incident_id: str) -> dict | None:
+        return repo.get_incident(self.conn, incident_id)
+
+    def get_actions(self, incident_id: str | None = None) -> list[dict]:
+        return repo.list_actions(self.conn, incident_id)
+
+    def get_agent_runs(self, incident_id: str | None = None) -> list[dict]:
+        return repo.list_agent_runs(self.conn, incident_id)
+
+    def next_id(self, table: str, column: str, prefix: str) -> str:
+        return repo.next_numeric_id(self.conn, table, column, prefix)
+
+    def record_action(self, action: dict) -> None:
+        repo.insert_action(self.conn, action)
+
+    def set_action_verification(self, action_id: str, state: str) -> None:
+        repo.update_action(self.conn, action_id, {"verification_state": state})
+
+    def set_incident_status(self, incident_id: str, status: str, *,
+                            current_owner: str | None = None,
+                            recommended_action: str | None = None) -> None:
+        """Containment: the incident stops being OPEN and gains an owner (N3)."""
+        updates: dict = {"status": status}
+        if current_owner is not None:
+            updates["current_owner"] = current_owner
+        if recommended_action is not None:
+            updates["recommended_action"] = recommended_action
+        repo.update_incident(self.conn, incident_id, updates)
+
+    def get_agent_run(self, run_id: str) -> dict | None:
+        return repo.get_agent_run(self.conn, run_id)
+
+    def get_agent_steps(self, run_id: str) -> list[dict]:
+        return repo.list_agent_steps(self.conn, run_id)
 
     def get_active_incidents(self) -> list[dict]:
         return repo.list_incidents(self.conn, open_only=True)

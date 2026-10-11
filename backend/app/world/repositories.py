@@ -97,6 +97,24 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def pause_running_jobs(conn: sqlite3.Connection, machine_id: str) -> list[str]:
+    """Pause every RUNNING job on one machine; returns the paused job ids (N3).
+
+    Containment stops production *reversibly*: jobs become PAUSED, never
+    CANCELLED, so a planner can resume them after the repair.
+    """
+    rows = conn.execute(
+        "SELECT job_id FROM production_jobs WHERE machine_id = ? AND status = 'RUNNING'",
+        (machine_id,)).fetchall()
+    job_ids = [row["job_id"] for row in rows]
+    if job_ids:
+        marks = ", ".join("?" for _ in job_ids)
+        conn.execute(
+            f"UPDATE production_jobs SET status = 'PAUSED' WHERE job_id IN ({marks})",
+            job_ids)
+    return job_ids
+
+
 def count_jobs(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT COUNT(*) FROM production_jobs").fetchone()[0])
 
@@ -211,6 +229,16 @@ def list_actions(conn: sqlite3.Connection, incident_id: str | None = None) -> li
     return _rows(conn.execute("SELECT * FROM actions ORDER BY action_id"))
 
 
+def update_action(conn: sqlite3.Connection, action_id: str,
+                  updates: dict[str, Any]) -> None:
+    allowed = {"approval_state", "executed_at", "verification_state", "result"}
+    cols = ", ".join(f"{key} = :{key}" for key in updates if key in allowed)
+    if not cols:
+        return
+    conn.execute(f"UPDATE actions SET {cols} WHERE action_id = :action_id",
+                 {**updates, "action_id": action_id})
+
+
 def count_actions(conn: sqlite3.Connection) -> int:
     return int(conn.execute("SELECT COUNT(*) FROM actions").fetchone()[0])
 
@@ -236,3 +264,71 @@ def evidence_of(incident: dict) -> list[dict]:
         return json.loads(incident.get("evidence") or "[]")
     except json.JSONDecodeError:
         return []
+
+
+# ── agent runs (N3) ────────────────────────────────────────────────────────
+def insert_agent_run(conn: sqlite3.Connection, run: dict[str, Any]) -> None:
+    conn.execute(
+        "INSERT INTO agent_runs(run_id, incident_id, machine_id, goal, status,"
+        " active_agent, model_provider, model_name, outcome, started_at, completed_at,"
+        " fail_first_work_order) VALUES (:run_id,:incident_id,:machine_id,:goal,:status,"
+        " :active_agent,:model_provider,:model_name,:outcome,:started_at,:completed_at,"
+        " :fail_first_work_order)", run)
+
+
+def update_agent_run(conn: sqlite3.Connection, run_id: str, updates: dict[str, Any]) -> None:
+    allowed = {"status", "active_agent", "outcome", "completed_at"}
+    cols = ", ".join(f"{key} = :{key}" for key in updates if key in allowed)
+    if not cols:
+        return
+    conn.execute(f"UPDATE agent_runs SET {cols} WHERE run_id = :run_id",
+                 {**updates, "run_id": run_id})
+
+
+def get_agent_run(conn: sqlite3.Connection, run_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM agent_runs WHERE run_id = ?", (run_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_agent_runs(conn: sqlite3.Connection,
+                    incident_id: str | None = None) -> list[dict]:
+    if incident_id:
+        return _rows(conn.execute(
+            "SELECT * FROM agent_runs WHERE incident_id = ? ORDER BY started_at, run_id",
+            (incident_id,)))
+    return _rows(conn.execute(
+        "SELECT * FROM agent_runs ORDER BY started_at, run_id"))
+
+
+def find_agent_run_for_incident(conn: sqlite3.Connection, incident_id: str) -> dict | None:
+    """Latest run for an incident, if any — the watcher's idempotency guard."""
+    row = conn.execute(
+        "SELECT * FROM agent_runs WHERE incident_id = ?"
+        " ORDER BY started_at DESC, run_id DESC LIMIT 1", (incident_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def insert_agent_step(conn: sqlite3.Connection, step: dict[str, Any]) -> None:
+    conn.execute(
+        "INSERT INTO agent_steps(run_id, sequence, agent, type, summary, tool_name,"
+        " input, output, status, timestamp) VALUES (:run_id,:sequence,:agent,:type,"
+        " :summary,:tool_name,:input,:output,:status,:timestamp)", step)
+
+
+def list_agent_steps(conn: sqlite3.Connection, run_id: str) -> list[dict]:
+    return _rows(conn.execute(
+        "SELECT * FROM agent_steps WHERE run_id = ? ORDER BY sequence", (run_id,)))
+
+
+def next_numeric_id(conn: sqlite3.Connection, table: str, column: str,
+                    prefix: str, width: int = 4) -> str:
+    """Next free `<PREFIX>-0001` id, derived from existing rows (deterministic)."""
+    rows = conn.execute(
+        f"SELECT {column} FROM {table} WHERE {column} LIKE ?", (f"{prefix}-%",)).fetchall()
+    used = 0
+    for row in rows:
+        tail = str(row[0]).rsplit("-", 1)[-1]
+        if tail.isdigit():
+            used = max(used, int(tail))
+    return f"{prefix}-{used + 1:0{width}d}"

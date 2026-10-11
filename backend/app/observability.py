@@ -22,6 +22,7 @@ Design rules (neatHack N0):
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import Any
 
@@ -96,6 +97,31 @@ class Observability:
             self._initialized = False
             self._status = "disabled"
             self._detail = "neatlogs shut down"
+
+    def lazy_span(self, kind: str, **span_attributes: Any):
+        """Decorator factory applying `@neatlogs.span(...)` at *call* time.
+
+        `span()` decides enabled/disabled when the decorator is applied - which
+        happens at import time, before `init()` runs in the FastAPI lifespan -
+        so agent instrumentation would silently stay a pass-through forever.
+        `lazy_span` defers that decision until the wrapped function runs, giving
+        real neatlogs spans with real durations, and stays a pass-through
+        whenever observability is disabled.
+        """
+
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                if not self.initialized:
+                    return func(*args, **kwargs)
+                import neatlogs  # local import: no-key boot stays dependency-free
+
+                traced = neatlogs.span(kind=kind, **span_attributes)(func)
+                return traced(*args, **kwargs)
+
+            return wrapper
+
+        return decorator
 
     def span(self, kind: str, **kwargs: Any):
         """Return the real neatlogs decorator when active; passthrough when not.

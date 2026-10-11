@@ -4,6 +4,11 @@
 rendered UI was **not** screenshot-verified. Everything below is a human check. Do not mark the
 visual part of N2 verified until these pass.
 
+> **N3 addendum (autonomous loop)** — the checks in section 8 below are new at N3. Sections 1–7
+> are unchanged (except that a normal `+30 min` now also triggers the agent run; use
+> `trigger_agents: false` in the advance payload — or judge sections 1–7 right after a fresh
+> reset before advancing — if you want the pure N2 behaviour back).
+
 **Setup**
 
 ```bash
@@ -102,3 +107,31 @@ cd /Users/khushisarawagi/Desktop/factora-agents && python3.11 scripts/seed_local
 - [ ] DevTools console: no errors, no 404s.
 
 **If any box fails:** record it in `docs/BUILD_LOG.md` under N2 (rule 11) before fixing it.
+
+---
+
+## 8. N3 addendum — the autonomous loop (add after `scripts/seed_local.py` reset)
+
+- [ ] The header shows a mode badge: **REAL LLM** (green, when `OPENROUTER_API_KEY` is set) or
+      **DETERMINISTIC TEST MODEL** (amber, offline). It must match `/api/agents/status`.
+- [ ] Press **+30 min**: CNC-03 turns red — and a blue **"Factora is responding"** panel appears
+      automatically (no "Run Agent" button exists anywhere).
+- [ ] The panel shows the run id (`RUN-20261005-…`), the goal, and an ordered timeline:
+      Watcher escalation → Coordinator assignment → Maintenance **tool** entries (telemetry,
+      history, stock, work orders, running job) → the **policy ALLOWED** line → containment
+      actions → "**5 / 5 checks passed** — VERIFIED" → final status chip VERIFIED.
+- [ ] After containment the twin itself changes: **CNC-03 turns blue/gray (MAINTENANCE)** and
+      stops pulsing red; the distribution row must recount it.
+- [ ] The CNC-03 inspector now shows: incident **RESOLVING**, a new work order with
+      **source=AGENT** (e.g. `WO-0005`, critical) alongside seeded `WO-0002`, and the job that
+      was RUNNING on CNC-03 (e.g. `JB-0005`) now **PAUSED**.
+- [ ] Press **+30 min** again: CNC-03 stays MAINTENANCE (never flips back to CRITICAL) and no
+      second agent run appears.
+- [ ] **Recovery arc:** tick the small **"Demo recovery scenario"** checkbox, press **Reset**
+      (clears runs), then **+30 min**. The timeline must show
+      `CREATE_URGENT_WORK_ORDER FAILED …` → `ACTING → RECOVERING` → the retry ok →
+      `5 / 5 checks passed` → **VERIFIED** (the failure and the retry both visible).
+- [ ] No chain-of-thought anywhere: the timeline shows events, evidence summaries, tools and
+      statuses — no raw model reasoning.
+- [ ] Offline check (optional): with `OPENROUTER_API_KEY` unset the badge reads DETERMINISTIC
+      TEST MODEL and the same loop still completes VERIFIED, from the deterministic stand-in.

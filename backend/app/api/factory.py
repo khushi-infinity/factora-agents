@@ -6,10 +6,15 @@ the route layer never invents values — every number comes from FactoryWorld.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query
 
+from ..agents import build_model, evaluate_world_for_escalations
+from ..agents.coordinator import RunOptions, respond_to_escalation
 from ..world import get_world
 from ..world import repositories as repo
+from .schemas_agents import AgentRunOut, run_out_from_row
 from .schemas_factory import (
     AdvanceRequest,
     AdvanceResponse,
@@ -212,7 +217,7 @@ def incidents() -> list[IncidentOut]:
 
 @router.post("/demo/reset", response_model=ResetResponse)
 def demo_reset() -> ResetResponse:
-    """Deterministic reset: reseed + clock back to epoch (no agents involved)."""
+    """Deterministic reset: reseed + clock back to epoch, agent runs cleared."""
     world = _world()
     counts = world.reset_world()
     clock = world.clock()
@@ -226,15 +231,38 @@ def demo_reset() -> ResetResponse:
 
 @router.post("/demo/advance", response_model=AdvanceResponse)
 def demo_advance(request: AdvanceRequest) -> AdvanceResponse:
+    """Advance the simulation, then let the Factory Watcher react (N3).
+
+    No "Run Agent" button: advancing the world *is* the trigger. The watcher
+    pre-filters deterministically, so a quiet world costs zero model calls.
+    """
     world = _world()
     try:
         result = world.advance(request.minutes)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    agent_runs: list[AgentRunOut] = []
+    watcher_state: Literal["escalated", "quiet"] = "quiet"
+    if request.trigger_agents:
+        model = build_model()
+        options = RunOptions(fail_first_work_order=request.fail_first_work_order)
+        escalations = evaluate_world_for_escalations(world)
+        for escalation in escalations:
+            respond_to_escalation(world, escalation, model, options)
+        if escalations:
+            watcher_state = "escalated"
+            agent_runs = [
+                run_out_from_row(row)
+                for row in world.get_agent_runs(escalation.incident_id)
+            ]
+
     machine = world.get_machine("CNC-03")
     return AdvanceResponse(
         clock=result["clock"],
         emitted_readings=result["emitted_readings"],
         cnc03_state=machine["state"] if machine else None,
         open_incidents=len(world.get_active_incidents()),
+        agent_runs=agent_runs,
+        watcher=watcher_state,
     )

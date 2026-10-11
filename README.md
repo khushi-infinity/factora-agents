@@ -6,10 +6,14 @@ Factora is an autonomous factory operating system built around a digital twin an
 agents. Agents observe simulated factory telemetry, investigate anomalies, coordinate decisions,
 take controlled actions, and verify the factory actually improved — every step traced.
 
-**Status: Milestone N2 — visual Factory Digital Twin.** A SQLite-backed simulated factory
+**Status: Milestone N3 — autonomous CNC-03 maintenance incident response.** A SQLite-backed simulated factory
 (23 machines, telemetry, production, parts, work orders, incidents) with a simulation clock and
-reset/advance demo controls, plus a browser 3D floor at `/twin` (and a Command Center at `/`)
-driven entirely by the backend. **No agents, no ML yet** — see [PROGRESS.md](./PROGRESS.md).
+reset/advance demo controls, a browser 3D floor at `/twin` (and a Command Center at `/`)
+driven entirely by the backend, and a real autonomous loop: when CNC-03 goes CRITICAL, a Factory
+Watcher escalates, a Coordinator assigns the Maintenance Agent, which investigates with real
+tools, containment executes (urgent work order + machine into MAINTENANCE + running job paused),
+a separate deterministic verifier re-reads the world, and the run ends VERIFIED — traced by
+neatlogs and displayed as a live timeline inside `/twin`. **No ML predictions, no finance agents yet** — see [PROGRESS.md](./PROGRESS.md).
 
 ## Fresh-code disclosure
 
@@ -28,7 +32,7 @@ code was copied. See [docs/PROVENANCE.md](./docs/PROVENANCE.md).
 
 | Sponsor | Role in Factora |
 |---|---|
-| **neatlogs** | Runtime observability: every agent run, LLM call, tool call, handoff, failure, retry and verification step traced. Foundation initialized in `backend/app/observability.py`. |
+| **neatlogs** | Runtime observability: every agent run, LLM call, tool call, handoff, failure, retry and verification step traced. Real runtime spans (WORKFLOW/AGENT/TOOL/CHAIN) in `backend/app/observability.py` + the agent modules. |
 | **Entire** | Development-time checkpointing: agent sessions joined to Git commits, giving judges a verifiable build history. Enabled from the first commit. |
 | **cfo.ai** | Business-plan modelling only (pricing, costs, revenue scenarios) for the submission material. Not a product runtime component. |
 
@@ -45,6 +49,7 @@ python3.11 -m venv .venv
 # Seed / inspect the deterministic factory world
 python3.11 scripts/seed_local.py            # reset + seed + validate (add --verify for digest proof)
 python3.11 scripts/run_demo_scenario.py     # print the CNC-03 degradation arc (no agents)
+python3.11 scripts/run_agent_demo.py        # the N3 autonomous loop, headless (add --recovery for the failure/recovery arc)
 
 # Frontend — Vite on :5173 (proxies /api to :8000)
 cd frontend
@@ -54,6 +59,38 @@ npm run dev
 
 The backend boots with **no credentials**. neatlogs tracing activates only when `NEATLOGS_API_KEY`
 is set in the environment; without it the app runs normally with observability disabled.
+Real-LLM mode activates only when `OPENROUTER_API_KEY` is set (`FACTORA_LLM_MODEL`, default
+`openrouter/free`); without it the agents run on a clearly-labelled deterministic stand-in
+(`DETERMINISTIC TEST MODE`) so tests and demos never need the internet.
+
+## The autonomous loop (N3)
+
+```text
+DETECT      Watcher (deterministic, no LLM): critical incident on a CRITICAL machine
+↓
+INVESTIGATE Coordinator assigns the Maintenance Agent (1 model call)
+↓           Maintenance Agent plans tool calls (1 model call), then fetches evidence itself:
+↓           recent telemetry · prior bearing repairs · spare-part stock · open work orders ·
+↓           running production job · the incident record
+↓           then recommends from that evidence (1 model call) — structured Pydantic output
+PLAN        Deterministic action policy decides what may run — the model proposes, code decides
+↓
+ACT         tools: create_maintenance_work_order (source AGENT) · place_machine_in_maintenance
+↓           (containment also pauses the machine's RUNNING job; ids recorded)
+↓           demo: first work-order call can fail deterministically → RECOVERING → retry once
+VERIFY      separate deterministic verifier re-reads the world:
+↓           machine_is_maintenance · work_order_created · action_recorded ·
+↓           active_job_paused · incident_contained (RESOLVING)
+VERIFIED    or FAILED / ESCALATED — every step persisted in agent_runs / agent_steps
+```
+
+Demo beat level: open `/twin`, select **CNC-03**, press **Advance +30 min** — the machine turns
+amber → red with a one-shot pulse, the state distribution changes, and a deterministic incident
+appears. In N3 the same press now triggers the watcher automatically: the "Factora is responding"
+timeline plays the agent run, and CNC-03 settles into MAINTENANCE (blue/gray) with its job paused
+and an AGENT-source work order; **Reset** restores the start. A single checkbox ("Demo recovery
+scenario") makes the first work-order tool call fail so judges can watch the RECOVERING → retry
+arc. Visual checklist: [docs/EVIDENCE/demo/manual-twin-checklist.md](./docs/EVIDENCE/demo/manual-twin-checklist.md).
 
 ## Tests
 
@@ -62,10 +99,9 @@ cd backend && .venv/bin/ruff check . && .venv/bin/pytest
 cd frontend && npm run typecheck && npm run lint && npm test && npm run build
 ```
 
-Demo beat level: open `/twin`, select **CNC-03**, press **Advance +30 min** — the machine turns
-amber → red with a one-shot pulse, the state distribution changes, and a deterministic incident
-appears; **Reset** restores the start. No agents involved until N3. Visual checklist:
-[docs/EVIDENCE/demo/manual-twin-checklist.md](./docs/EVIDENCE/demo/manual-twin-checklist.md).
+Demo beat level: open `/twin`, select **CNC-03**, press **Advance +30 min** — the watcher
+escalates automatically; the timeline shows the investigation, the containment and the 5/5
+verification, and the twin turns CNC-03 MAINTENANCE. **Reset** restores the start.
 
 ## Documents
 

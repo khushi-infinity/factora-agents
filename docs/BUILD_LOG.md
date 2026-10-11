@@ -355,3 +355,106 @@ N2 complete: a genuine visual twin at `/twin`, backend-driven placement and stat
 inspector with real telemetry and charts, working Reset/Advance with the CNC-03
 WARNING → CRITICAL arc and a visible incident, docs reconciled. No agents, no ML, no LLM calls,
 no fabricated traces — N3 not started.
+
+---
+
+## N3 — Autonomous CNC-03 maintenance incident response
+
+### Handoff reality check (rule: verify everything)
+
+The N3 handoff claimed "no N3 product code written — planning only". The repository said otherwise:
+the working tree already contained a complete uncommitted N3 implementation (agent modules, tools,
+policy, verifier, coordinator, API, 540 backend tests-worth of code, frontend timeline). Actual
+repo state wins; the code was audited rather than rebuilt, completed where the spec required, and
+brought to green.
+
+### Audit findings + fixes applied
+
+- **Real spec gaps found and fixed**:
+  - `place_machine_in_maintenance` did **not pause CNC-03's RUNNING production job** (spec §5).
+    Added `repositories.pause_running_jobs` (RUNNING → PAUSED, reversible), exposed via
+    `FactoryWorld.pause_active_jobs`, called by the containment tool, paused job ids recorded in
+    the action result → they land in the `actions` ledger payload.
+  - Verification had **no `active_job_paused` check** (spec §14). Added as the fourth check
+    (5/5 total now: `machine_is_maintenance`, `work_order_created`, `action_recorded`,
+    `active_job_paused`, `incident_contained`).
+  - A duplicated `pause_running_jobs` definition and a dropped `def` line both introduced and
+    removed during editing — caught by `ruff` F811 and a syntax check, fixed before any commit.
+- **Model outputs in the wild**: with a real OpenRouter free model the deterministic demo tool
+  filed two output-repair attempts (missing field; malformed JSON) and called `get_spare_part`
+  with a wrong invented id (`SPindle_Bearing`) — the tool answered NOT_FOUND as a clean error
+  envelope and the assessment still landed on BRG-AX-17 from history. The repair-once-then-
+  escalate design held up under a real, sloppy free model.
+- **Environment quirk**: backgrounded uvicorn processes are reaped between tool invocations in
+  this harness; the live API demo was therefore executed as one script (server + both flows).
+
+### Architecture as built
+
+- `app/agents/watcher.py` — deterministic pre-filter, idempotent per incident, zero LLM.
+- `app/agents/coordinator.py` — owns `RunRecorder` (agent_runs/agent_steps CRUD + enforced
+  transitions), calls the model for exactly one decision (specialist assignment), runs policy,
+  executes actions with one deterministic retry on failure, contains the incident, calls the
+  verifier, and ends VERIFIED / FAILED / ESCALATED.
+- `app/agents/maintenance.py` — plan (model call 1) → execute read tools → assess (model call 2);
+  tool-plan output is re-bound to known ids and stripped of non-read tools before execution.
+- `app/agents/policy.py` — 7 deterministic rules; the model cannot act without them.
+- `app/agents/verification.py` — separate stage; re-reads persisted world state only.
+- `app/agents/llm.py` — `AgentModel` protocol; OpenRouter (lazy `openai` import,
+  `reasoning.exclude` for free models, 3 transient retries) vs. `DeterministicAgentModel` and
+  `ScriptedAgentModel` both hard-labelled `DETERMINISTIC TEST MODEL`.
+- `app/agents/tools.py` — typed read/action tools over the FactoryWorld facade; FailureInjector
+  for the deterministic demo failure only.
+- `app/world` — `agent_runs`/`agent_steps` DDL (schema n3), reset/drop list extended, repo CRUD;
+  `_update_states` skips machines already in MAINTENANCE.
+
+### Commands run (gates — actual output at N3 close)
+
+```text
+cd backend && .venv/bin/ruff check .         → All checks passed!
+cd backend && .venv/bin/pytest               → 96 passed in ~46s
+frontend npm run typecheck                   → clean
+frontend npm run lint                        → clean
+frontend npm test                            → Test Files 7 passed, Tests 25 passed
+frontend npm run build                       → ✓ built in ~330ms
+python3.11 scripts/seed_local.py --verify    → Determinism: VERIFIED (digest 76d28cc593b3)
+python3.11 scripts/run_demo_scenario.py      → CNC-03 arc intact (agents untouched when not triggered)
+backend/.venv/bin/python scripts/run_agent_demo.py        → normal arc: VERIFIED, 5/5 checks
+backend/.venv/bin/python scripts/run_agent_demo.py --recovery → fail → RECOVERING → retry → VERIFIED
+git diff --check                             → clean
+```
+
+### Live API demo (both flows in REAL LLM mode, openrouter/free)
+
+Normal: reset → advance +30 → `watcher: escalated`, CNC-03 **MAINTENANCE**, incident
+`INC-20261005-001` **RESOLVING** owned `FACTORA_AGENT/RUN-20261005-0001`, job **JB-0005 PAUSED**,
+**WO-0005 source=AGENT** critical, run VERIFIED with 5/5 checks (23 steps).
+Recovery (`fail_first_work_order: true`): `CREATE_URGENT_WORK_ORDER FAILED (TRANSIENT_FAILURE)` →
+`ACTING → RECOVERING` → retry ok → **VERIFIED** (24 steps, both the failure and the retry kept).
+
+### neatlogs (rule 17: verify before claiming)
+
+- SDK 1.4.26. Instrumentation is runtime, not import-time: `Observability.lazy_span` applies
+  `neatlogs.span(kind=…)` only when the wrapped function runs *and* observability was initialised
+  in the FastAPI lifespan — otherwise a clean passthrough. Spans: WORKFLOW
+  `factora.incident_response`, AGENT watcher/coordinator/maintenance, CHAIN action_policy and
+  verification, TOOL calls in the maintenance investigation.
+- Verified live with a test key: status `active`, watcher executed under a real span, batch export
+  attempted (401 Unauthorized = expected for a fake key — this proves real export, not a stub).
+  `neatlogs.wrap()` is applied to the OpenAI-compatible client in `OpenRouterAgentModel` when the
+  SDK is initialised, tracing the actual LLM calls.
+- No key ⇒ `disabled`, agents run normally, no crash, and the key is never logged anywhere.
+
+### Entire (rule 18)
+
+CLI **0.11.4** (upgraded from 0.10.5). `entire status` → Enabled · branch main (Claude Code hooks
+out of date; 7 Codex hooks pending approval — user actions). `entire checkpoint list` →
+**0 checkpoints**: Freebuff-driven commits do not trip session capture; recorded honestly, no
+identifier invented.
+
+### Result
+
+N3 complete: one complete autonomous loop — Watcher → Coordinator → Maintenance Agent with real
+tools, deterministic policy, failure + recovery, separate verification, persisted runs/steps,
+neatlogs spans, auto-trigger from `/api/demo/advance`, endpoints, and a timeline inside `/twin`
+that reflects containment on the twin itself. Backend 96 tests, frontend 25 tests, both gate sets
+green. N4 not started.

@@ -17,6 +17,10 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Pin the environment so suite results never depend on a real .env/config."""
     # neatlogs key must never leak in from a developer shell or a real .env.
     monkeypatch.setenv("NEATLOGS_API_KEY", "")
+    # Same for the LLM: the suite runs the deterministic offline model, never
+    # OpenRouter, so results stay reproducible and network-free.
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    monkeypatch.setenv("FACTORA_DEMO_FAIL_FIRST_WORK_ORDER", "")
     monkeypatch.setenv("APP_ENV", "test")
 
     get_settings.cache_clear()

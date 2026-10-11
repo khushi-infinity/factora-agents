@@ -20,13 +20,21 @@ _conn: sqlite3.Connection | None = None
 
 
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
-    """Open (once per process) the world database with FK enforcement on."""
+    """Open (once per process) the world database with FK enforcement on.
+
+    `check_same_thread=False` is deliberate: uvicorn serves sync routes from a
+    threadpool, so the single process-wide connection is reached from whichever
+    worker thread handles the request. FactoryWorld is a single-writer
+    simulation (one demo user), so this is safe and keeps the architecture at
+    one connection rather than a pool.
+    """
     global _conn
     if _conn is None:
         env_path = os.environ.get("FACTORA_DB_PATH")
         path = Path(db_path or env_path or DEFAULT_DB_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _conn = sqlite3.connect(path, isolation_level=None)  # autocommit; explicit txns below
+        _conn = sqlite3.connect(path, isolation_level=None,
+                                check_same_thread=False)  # autocommit
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA foreign_keys = ON")
     return _conn
@@ -40,9 +48,10 @@ def create_schema(conn: sqlite3.Connection) -> None:
 def reset_schema(conn: sqlite3.Connection) -> None:
     """Drop every table then recreate — used by reset_world()/seed script."""
     tables = [
-        "seed_audit", "actions", "incidents", "downtime_events", "work_orders",
-        "maintenance_history", "spare_parts", "production_jobs", "sensor_readings",
-        "capabilities", "machines", "world_state",
+        "agent_steps", "agent_runs", "seed_audit", "actions", "incidents",
+        "downtime_events", "work_orders", "maintenance_history", "spare_parts",
+        "production_jobs", "sensor_readings", "capabilities", "machines",
+        "world_state",
     ]
     for table in tables:
         conn.execute(f"DROP TABLE IF EXISTS {table}")

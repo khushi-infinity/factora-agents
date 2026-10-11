@@ -6,13 +6,14 @@ Conventions:
   * `economics` carries per-machine synthetic/demo cost parameters, clearly
     labelled as demo economics, never industry benchmarks;
   * `world_state` is a key/value table holding the simulation clock + seed info;
-  * `incidents` and `actions` exist from N1 (schema-complete) but are only
-    populated by deterministic scenario logic — agents come at N3.
+  * `incidents` and `actions` exist from N1 (schema-complete); the scenario owns
+    incidents, and the autonomous agents (N3) append to `actions` and persist
+    their runs in `agent_runs` / `agent_steps`.
 """
 
 from __future__ import annotations
 
-SCHEMA_VERSION = "n1"
+SCHEMA_VERSION = "n3"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS world_state (
@@ -108,7 +109,7 @@ CREATE TABLE IF NOT EXISTS work_orders (
     priority      TEXT NOT NULL CHECK (priority IN ('low','medium','high','critical')),
     scheduled_for TEXT,
     estimated_cost_usd REAL,
-    source        TEXT NOT NULL,            -- OPERATOR / PLANNER / SCENARIO
+    source        TEXT NOT NULL,            -- OPERATOR / PLANNER / SCENARIO / AGENT
     created_at    TEXT NOT NULL
 );
 
@@ -155,4 +156,45 @@ CREATE TABLE IF NOT EXISTS seed_audit (
     seed   TEXT NOT NULL,
     digest TEXT NOT NULL                    -- sha256 over canonical seeded content
 );
+
+-- ── agent runtime (N3) ─────────────────────────────────────────────────────
+-- Autonomous runs are persisted so a completed incident response stays
+-- inspectable: the run row holds lifecycle state, the step rows hold the
+-- observable decisions/tools/verification - never hidden chain-of-thought.
+CREATE TABLE IF NOT EXISTS agent_runs (
+    run_id        TEXT PRIMARY KEY,
+    incident_id   TEXT NOT NULL REFERENCES incidents(incident_id),
+    machine_id    TEXT NOT NULL REFERENCES machines(machine_id),
+    goal          TEXT NOT NULL,
+    status        TEXT NOT NULL CHECK (status IN
+        ('DETECTED','INVESTIGATING','PLANNING','ACTION_PENDING','ACTING',
+         'VERIFYING','RECOVERING','VERIFIED','FAILED','ESCALATED')),
+    active_agent  TEXT,                     -- watcher / coordinator / maintenance
+    model_provider TEXT NOT NULL,           -- openrouter / scripted / deterministic
+    model_name    TEXT NOT NULL,
+    outcome       TEXT,
+    started_at    TEXT NOT NULL,
+    completed_at  TEXT,
+    fail_first_work_order INTEGER NOT NULL DEFAULT 0   -- demo recovery injection
+);
+
+CREATE TABLE IF NOT EXISTS agent_steps (
+    step_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id    TEXT NOT NULL REFERENCES agent_runs(run_id),
+    sequence  INTEGER NOT NULL,
+    agent     TEXT NOT NULL,
+    type      TEXT NOT NULL CHECK (type IN
+        ('HANDOFF','STATUS','DECISION','TOOL','ACTION','POLICY',
+         'VERIFICATION','RECOVERY','ERROR')),
+    summary   TEXT NOT NULL,
+    tool_name TEXT,
+    input     TEXT,                          -- JSON
+    output    TEXT,                          -- JSON
+    status    TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    UNIQUE (run_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_steps_run   ON agent_steps(run_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_incident ON agent_runs(incident_id);
 """

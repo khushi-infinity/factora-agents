@@ -11,3 +11,9 @@ pydantic-settings>=2.3,<3.0
 # --- Sponsor: neatlogs (agent observability; verified via docs.neatlogs.com) ---
 # Requires Python >=3.10,<3.14 per the SDK docs.
 neatlogs>=0.1.0
+
+# --- LLM (agents, N3) -------------------------------------------------------
+# OpenAI-compatible client used against OpenRouter (free-model alias by
+# default). Optional at runtime: without OPENROUTER_API_KEY the agents use the
+# deterministic offline stand-in, so tests and demos need no key and no card.
+openai>=1.40

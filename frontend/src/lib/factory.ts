@@ -3,6 +3,7 @@
  * api.ts: typed, time-boxed, no data fabrication. Fresh implementation.
  */
 import { getJson, postJson } from './api'
+import type { AgentRun } from './agents'
 
 export interface Incident {
   incident_id: string
@@ -29,6 +30,16 @@ export interface AdvanceResult {
   emitted_readings: number
   cnc03_state: string | null
   open_incidents: number
+  /** Runs the watcher started during this advance (N3). */
+  agent_runs: AgentRun[]
+  watcher: 'escalated' | 'quiet'
+}
+
+export interface AdvanceOptions {
+  /** Run the Factory Watcher after advancing (default true, per the API). */
+  triggerAgents?: boolean
+  /** Demo recovery scenario: the first work-order tool call fails on purpose. */
+  failFirstWorkOrder?: boolean
 }
 
 export interface ResetResult {
@@ -42,8 +53,15 @@ export function fetchFactorySnapshot(): Promise<FactorySnapshot> {
   return getJson<FactorySnapshot>('/api/factory')
 }
 
-export function advanceSimulation(minutes: number): Promise<AdvanceResult> {
-  return postJson<AdvanceResult>('/api/demo/advance', { minutes })
+export function advanceSimulation(
+  minutes: number,
+  options: AdvanceOptions = {},
+): Promise<AdvanceResult> {
+  return postJson<AdvanceResult>('/api/demo/advance', {
+    minutes,
+    trigger_agents: options.triggerAgents ?? true,
+    fail_first_work_order: options.failFirstWorkOrder ?? false,
+  })
 }
 
 export function resetSimulation(): Promise<ResetResult> {

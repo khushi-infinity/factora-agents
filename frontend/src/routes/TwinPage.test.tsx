@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { AgentRun, AgentRunDetail, AgentStatus } from '../lib/agents'
 import type { FactoryLine, FactorySnapshot, MachineContext, TwinMachine } from '../lib/factory'
 
 const IDS = [
@@ -83,8 +84,57 @@ const context: MachineContext = {
   economics_note: 'Synthetic demo economics',
 }
 
+const agentStatus: AgentStatus = {
+  model_provider: 'deterministic',
+  model_name: 'factora-deterministic-v1',
+  mode: 'DETERMINISTIC TEST MODEL',
+  detail: 'offline rule-based stand-in (no network, no LLM)',
+  observability: 'disabled',
+  autonomous_actions: ['CREATE_URGENT_WORK_ORDER', 'PLACE_IN_MAINTENANCE'],
+  failure_injection_available: true,
+}
+
+const agentRun: AgentRun = {
+  run_id: 'RUN-20261005-0001',
+  incident_id: 'INC-20261005-001',
+  machine_id: 'CNC-03',
+  goal: 'Resolve or contain bearing degradation incident on CNC-03',
+  status: 'VERIFIED',
+  active_agent: 'coordinator',
+  model_provider: 'deterministic',
+  model_name: 'factora-deterministic-v1',
+  outcome: 'CNC-03 contained for INC-20261005-001.',
+  started_at: '2026-10-05 06:30:00',
+  completed_at: '2026-10-05 06:30:00',
+  fail_first_work_order: false,
+}
+
+const agentDetail: AgentRunDetail = {
+  ...agentRun,
+  steps: [
+    { sequence: 1, agent: 'watcher', type: 'HANDOFF', summary: 'Escalated: critical incident', tool_name: null, input: null, output: null, status: 'OK', timestamp: '2026-10-05 06:30:00' },
+    { sequence: 2, agent: 'maintenance', type: 'TOOL', summary: 'tool get_recent_telemetry → ok', tool_name: 'get_recent_telemetry', input: null, output: { trend: {} }, status: 'OK', timestamp: '2026-10-05 06:30:00' },
+    { sequence: 3, agent: 'coordinator', type: 'POLICY', summary: 'Action policy ALLOWED: incident severity is critical', tool_name: null, input: null, output: null, status: 'ALLOWED', timestamp: '2026-10-05 06:30:00' },
+    { sequence: 4, agent: 'coordinator', type: 'VERIFICATION', summary: '4/4 checks passed — VERIFIED', tool_name: null, input: null, output: null, status: 'PASS', timestamp: '2026-10-05 06:30:00' },
+  ],
+}
+
+function mockAgentLib(run: AgentRun | null = agentRun) {
+  vi.doMock('../lib/agents', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('../lib/agents')>()
+    return {
+      ...actual,
+      fetchAgentStatus: () => Promise.resolve(agentStatus),
+      fetchAgentRuns: () => Promise.resolve(run ? [run] : []),
+      fetchAgentRun: () => Promise.resolve(agentDetail),
+    }
+  })
+}
+
 describe('TwinPage', () => {
   it('renders the twin shell from real API data and falls back without WebGL', async () => {
+    vi.resetModules()
+    mockAgentLib(null)
     vi.doMock('../lib/factory', async (importOriginal) => {
       const actual = await importOriginal<typeof import('../lib/factory')>()
       return {
@@ -93,7 +143,7 @@ describe('TwinPage', () => {
         fetchMachines: () => Promise.resolve(machines),
         fetchLines: () => Promise.resolve(lines),
         fetchMachineContext: () => Promise.resolve(context),
-        advanceSimulation: () => Promise.resolve({ clock: '', emitted_readings: 0, cnc03_state: 'CRITICAL', open_incidents: 1 }),
+        advanceSimulation: () => Promise.resolve({ clock: '', emitted_readings: 0, cnc03_state: 'CRITICAL', open_incidents: 1, agent_runs: [], watcher: 'quiet' }),
         resetSimulation: () => Promise.resolve({ status: 'reset', clock: '', machines: 23, telemetry_rows: 3312 }),
       }
     })
@@ -137,5 +187,55 @@ describe('TwinPage', () => {
     expect(screen.getAllByText('Vibration').length).toBeGreaterThanOrEqual(2)
     expect(screen.getAllByText('(mm/s)').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('(°C)').length).toBeGreaterThanOrEqual(1)
+
+    // the UI must never present the offline stand-in as a live model
+    expect(await screen.findByText('DETERMINISTIC TEST MODEL')).toBeInTheDocument()
+    expect(screen.queryByText('Factora is responding')).not.toBeInTheDocument()
+  })
+
+  it('shows the autonomous activity timeline after an incident is contained', async () => {
+    vi.resetModules()
+    mockAgentLib()
+    vi.doMock('../lib/factory', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../lib/factory')>()
+      return {
+        ...actual,
+        fetchFactorySnapshot: () => Promise.resolve(snapshot),
+        fetchMachines: () => Promise.resolve(machines),
+        fetchLines: () => Promise.resolve(lines),
+        fetchMachineContext: () => Promise.resolve(context),
+        advanceSimulation: () =>
+          Promise.resolve({
+            clock: '2026-10-05 06:30:00',
+            emitted_readings: 66,
+            cnc03_state: 'MAINTENANCE',
+            open_incidents: 1,
+            agent_runs: [agentRun],
+            watcher: 'escalated',
+          }),
+        resetSimulation: () => Promise.resolve({ status: 'reset', clock: '', machines: 23, telemetry_rows: 3312 }),
+      }
+    })
+
+    const { default: TwinPage } = await import('./TwinPage')
+    render(
+      <MemoryRouter>
+        <TwinPage />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('button', { name: '+30 min' })).toBeInTheDocument()
+
+    // advancing is the trigger: no "Run Agent" button exists anywhere
+    expect(screen.queryByRole('button', { name: /run agent/i })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '+30 min' }))
+
+    expect(await screen.findByText('Factora is responding')).toBeInTheDocument()
+    expect(screen.getByText('RUN-20261005-0001')).toBeInTheDocument()
+    expect(screen.getByText('Goal:')).toBeInTheDocument()
+    expect(await screen.findByText('tool get_recent_telemetry → ok')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText(/4\/4 checks passed/)).toBeInTheDocument())
+    expect(screen.getByText('Outcome:')).toBeInTheDocument()
   })
 })

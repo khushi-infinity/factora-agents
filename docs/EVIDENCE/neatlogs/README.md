@@ -28,8 +28,10 @@ docs for long-running servers):
   is configured;
 - `neatlogs.flush()` + `neatlogs.shutdown()` on server shutdown (the pattern the SDK docs
   prescribe for FastAPI rather than per-request flushing);
-- future agents/tools will use `@neatlogs.span(kind="WORKFLOW"/"AGENT"/"TOOL", ...)` per the SDK
-  docs — the span helper already lives in `observability.py` and is inert until init succeeds.
+- since N3 the agent workflow is instrumented with **runtime** spans — `Observability.lazy_span`
+  applies `neatlogs.span(kind=...)` at *call* time (import-time decoration would freeze into a
+  pass-through before `init()` runs in the lifespan), so a disabled SDK costs nothing and an
+  initialised one gets real spans with durations.
 
 ## Required environment variables (verified names)
 
@@ -47,10 +49,34 @@ Both are read from the environment / repo-root `.env` only. Nothing is committed
 | SDK installed + doctor **local** | ✅ pass (2026-10-10, captured in BUILD_LOG) |
 | Application **boots without a key** | ✅ observability reported `disabled`, health stays `ok` |
 | Health endpoint discloses state | ✅ `observability: {provider, status, detail}` |
+| **Runtime agent spans (N3)** | ✅ verified with a test key: status `active`, the Watcher executed under a real span, and batch export was attempted (401 Unauthorized — the expected wall for a fake key, proving real export rather than a stub) |
+| **LLM-call tracing wrap (N3)** | ✅ `neatlogs.wrap()` applied to the OpenAI-compatible client in `OpenRouterAgentModel` when initialised (REAL LLM mode) |
 | Doctor **probe** (round-trip to the dashboard) | ⏳ blocked: needs a real project key |
-| Real agent traces | ⏳ N3+ (agents do not exist at N0) |
+| Populated dashboard screenshots | ⏳ blocked: needs a real project key — none are claimed |
 
-No screenshots of a populated dashboard are claimed — none exist yet.
+No screenshots of a populated dashboard are claimed — none exist yet. The instrumentation itself
+is real and exercised (see BUILD_LOG N3); the dashboard view is the only pending piece.
+
+## What the N3 instrumentation actually emits
+
+```text
+WORKFLOW factora.incident_response
+├─ AGENT watcher        (deterministic pre-filter; spans only when it runs)
+├─ AGENT coordinator    (workflow owner)
+│  ├─ CHAIN action_policy     (deterministic guardrail)
+│  ├─ AGENT maintenance       (specialist)
+│  │  ├─ TOOL get_machine / get_recent_telemetry / get_maintenance_history /
+│  │  │        get_spare_part / get_open_work_orders / get_current_production_job /
+│  │  │        get_active_incident   (per planned call)
+│  │  └─ (REAL LLM mode: chat.completions traced via neatlogs.wrap)
+│  ├─ TOOL create_maintenance_work_order   (policy-gated action)
+│  ├─ TOOL place_machine_in_maintenance    (policy-gated action)
+│  └─ CHAIN verification                   (deterministic checks)
+└─ run ends VERIFIED / FAILED / ESCALATED — mirror of agent_steps in SQLite
+```
+
+Failure + recovery (demo injection) shows up as the failing TOOL span followed by the retry —
+the trace mirrors the persisted step list 1:1.
 
 ## What later traces must demonstrate (demo evidence plan)
 

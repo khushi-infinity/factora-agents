@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .schemas_agents import AgentRunOut
+
 MachineState = Literal["HEALTHY", "WARNING", "CRITICAL", "MAINTENANCE", "OFFLINE"]
 
 
@@ -129,6 +131,12 @@ class ResetResponse(BaseModel):
 
 class AdvanceRequest(BaseModel):
     minutes: int = Field(gt=0, le=24 * 60, description="sim minutes to advance (10-min ticks)")
+    trigger_agents: bool = Field(
+        default=True,
+        description="run the Factory Watcher after advancing (autonomous response)")
+    fail_first_work_order: bool = Field(
+        default=False,
+        description="demo recovery scenario: inject one work-order tool failure")
 
 
 class AdvanceResponse(BaseModel):
@@ -136,3 +144,7 @@ class AdvanceResponse(BaseModel):
     emitted_readings: int
     cnc03_state: MachineState | None
     open_incidents: int
+    agent_runs: list[AgentRunOut] = Field(
+        default_factory=list,
+        description="runs started by the watcher during this advance")
+    watcher: Literal["escalated", "quiet"]

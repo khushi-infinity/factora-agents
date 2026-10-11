@@ -1,14 +1,84 @@
 # PROGRESS.md — Factora (neatHack 2026) Build State
 
 **Hackathon:** neatHack 2026
-**Current milestone:** N0 + N1 + N2 complete and pushed to `origin/main` (N1 = `7df8fbb`; N2 hash in `git log`)
-**Current goal:** N3 — first autonomous detect → investigate → act → verify loop (awaiting instruction)
+**Current milestone:** N0–N3 complete and pushed to `origin/main` (`git log` for hashes)
+**Current goal:** N4 — production + finance agents (awaiting instruction)
 **Repo:** https://github.com/khushi-infinity/factora-agents
 **Rule:** update this file (and `docs/BUILD_LOG.md`) at the end of every completed milestone.
 
 ---
 
 ## Completed
+
+### N3 — autonomous CNC-03 maintenance incident response ✅
+
+- [x] **Factory Watcher (deterministic, zero-LLM pre-filter)**: after every simulation advance it
+      escalates only *critical* incidents whose machine is actually CRITICAL, with idempotency —
+      one autonomous run per incident, ever. A healthy world costs zero model calls.
+- [x] **Coordinator (Factory Brain, workflow in code — not in a prompt)**: persists `agent_runs` /
+      `agent_steps`, enforces a code-level state machine
+      `DETECTED→INVESTIGATING→PLANNING→ACTION_PENDING→ACTING→VERIFYING→RECOVERING→
+      VERIFIED/FAILED/ESCALATED` (`models.ALLOWED_TRANSITIONS`; invalid transitions raise),
+      asks the model only for structured decisions (Pydantic-validated, 1 repair attempt then
+      escalate), applies the deterministic action policy, executes approved tools, contains the
+      incident, and hands the result to a separate verifier.
+- [x] **Maintenance Agent (only specialist)**: model call 1 picks a *tool plan*; it then fetches
+      its own evidence (telemetry trend, prior bearing repairs, spare-part stock, open work
+      orders, running job, incident record — nothing is injected wholesale); model call 2 returns
+      a `MaintenanceAssessment` citing the numbers it retrieved.
+- [x] **Typed tools (`backend/app/agents/tools.py`)**: read tools `get_machine`,
+      `get_recent_telemetry`, `get_maintenance_history`, `get_spare_part`, `get_open_work_orders`,
+      `get_current_production_job`, `get_active_incident`; policy-gated action tools
+      `create_maintenance_work_order` (source `AGENT`, e.g. `WO-0005`; WO-0002 is evidence that
+      the scheduled timing is too late, not a blocker) and `place_machine_in_maintenance` —
+      which also **pauses CNC-03's RUNNING job (JB-0005 → PAUSED ids recorded in the action
+      payload)**. Agents never execute SQL; every touch goes through the FactoryWorld facade.
+- [x] **Deterministic action policy** (`policy.py`): the model proposes; code decides. Allowed
+      only for critical incident + CRITICAL machine + reversible action kinds + medium/high
+      continued-operation risk + required part in stock + no IN_PROGRESS/ASSIGNED work + no prior
+      executed action for the incident. Blocked ⇒ run ends ESCALATED with the reason stored.
+- [x] **Separate deterministic verifier** (`verification.py`): re-reads persisted world state —
+      `machine_is_maintenance`, `work_order_created`, `action_recorded`, `active_job_paused`,
+      `incident_contained` (= status RESOLVING; the N1 CHECK has no CONTAINED literal and was not
+      changed). VERIFIED ⇒ all pass; fail ⇒ one targeted remediation retry, then FAILED.
+- [x] **Failure + recovery (demo)**: `FACTORA_DEMO_FAIL_FIRST_WORK_ORDER=true` (or a /twin
+      checkbox / `fail_first_work_order` in the advance payload) makes the first work-order
+      tool call fail deterministically (`TRANSIENT_FAILURE`) → `RECOVERING` → retry once →
+      VERIFIED with both the failed and the retry step persisted. Never random.
+- [x] **LLM abstraction (`llm.py`)**: `AgentModel` protocol; `OpenRouterAgentModel`
+      (OpenAI-compatible, lazy `openai` import, env `OPENROUTER_API_KEY` +
+      `FACTORA_LLM_MODEL` default `openrouter/free`, transient-error retries); offline
+      `DeterministicAgentModel` labelled `DETERMINISTIC TEST MODEL` (never presented as a live
+      model); `ScriptedAgentModel` for tests. ~3–5 model calls per incident (1 coordinator +
+      2 maintenance + at most 1 repair each).
+- [x] **Auto-trigger**: `POST /api/demo/advance` runs the watcher after advancing — the flagship
+      demo needs no button. Response gains `agent_runs` and `watcher: escalated|quiet`;
+      `GET /api/agents/status|runs|runs/{id}` + debug `POST /api/agents/run` added.
+- [x] **neatlogs — real runtime spans**: `lazy_span` applies `neatlogs.span(kind=…)` at *call*
+      time (import-time decoration would freeze before `init()` in the FastAPI lifespan).
+      WORKFLOW `factora.incident_response` → AGENT watcher/coordinator/maintenance → CHAIN
+      action_policy/verification → TOOL calls span the real workflow; `neatlogs.wrap()` turns on
+      OpenAI-compatible LLM-call tracing when a NEATLOGS_API_KEY exists; no key ⇒ disabled, no
+      crash; the key is never logged. Verified live: spans export (401 wall = expected with a
+      test key; real traces need a project key).
+- [x] **`agent_runs` / `agent_steps` tables** (N3 DDL, schema version n3): run lifecycle +
+      ordered steps (HANDOFF/STATUS/DECISION/TOOL/ACTION/POLICY/VERIFICATION/RECOVERY/ERROR),
+      no hidden chain-of-thought — only summaries, tool I/O and verification status. Added to
+      reset/drop logic + repository CRUD only.
+- [x] **Simulation honesty**: machines already in MAINTENANCE are left in MAINTENANCE by later
+      advances (telemetry keeps emitting, never flipped back to CRITICAL, no second incident).
+- [x] **Twin UI (inside `/twin`, no chat page)**: "Factora is responding" activity timeline
+      (watcher → coordinator → maintenance tool evidence → policy → containment → recovery when
+      injected → "N/N checks passed" → VERIFIED/ESCALATED), REAL LLM / DETERMINISTIC TEST MODEL
+      badge in the header, one small "Demo recovery scenario" toggle, and the twin itself
+      reflects containment: CNC-03 turns MAINTENANCE blue/gray, inspector shows the AGENT work
+      order, RESOLVING incident, and paused job.
+- [x] **Gates**: backend `ruff` clean + **96 tests** (37 new agent tests, no network);
+      frontend typecheck/lint clean, **25 tests (7 files)**, build OK; determinism
+      `76d28cc593b3` unchanged; live API demo verified BOTH flows (normal + recovery) against a
+      running uvicorn **in REAL LLM mode** (openrouter/free), plus offline deterministic mode in
+      the test-suite. Verified states after +30 min: CNC-03 MAINTENANCE, JB-0005 PAUSED,
+      WO-0005 source=AGENT, incident RESOLVING, run VERIFIED.
 
 ### N2 — operational APIs + visual Factory Digital Twin ✅
 
@@ -105,14 +175,12 @@
 
 ## In Progress
 
-- Nothing — N2 is complete. Waiting on explicit instruction to start N3.
+- Nothing — N3 is complete. Waiting on explicit instruction to start N4.
 
 ## Next 3 (do NOT start without instruction)
 
-1. **N3 — first autonomous detect → investigate → act → verify loop.** Agent runtime + neatlogs
-   instrumented spans + Watcher/Coordinator/Maintenance minimum viable loop over the N1 world.
-2. **N4 — production + finance agents, approvals, reroute flow** (per plan §K).
-3. **N5+** — remaining pages and sponsor integrations per plan §K.
+1. **N4 — production + finance agents, approvals, reroute flow** (per plan §K).
+2. **N6** — remaining pages and sponsor integrations per plan §K.
 
 ## Blockers
 
@@ -130,18 +198,19 @@
 | Gate | State | Evidence |
 |---|---|---|
 | Backend lint | ✅ | `cd backend && .venv/bin/ruff check .` → All checks passed! |
-| Backend tests | ✅ | `cd backend && .venv/bin/pytest` → **61 passed**, 1 warning |
+| Backend tests | ✅ | `cd backend && .venv/bin/pytest` → **96 passed** (N3 +35 agent/agent-API tests) |
 | Frontend typecheck | ✅ | `npm run typecheck` → no findings |
 | Frontend lint | ✅ | `npm run lint` → no findings |
-| Frontend tests | ✅ | `npm test` → **21 passed (6 files)** |
-| Frontend build | ✅ | `npm run build` → built in ~511 ms |
+| Frontend tests | ✅ | `npm test` → **25 passed (7 files)** |
+| Frontend build | ✅ | `npm run build` → built in ~330 ms |
 | Determinism diff | ✅ | `git diff --check` → no whitespace errors |
 | Seed determinism | ✅ | `python3.11 scripts/seed_local.py --verify` → Determinism: VERIFIED (digest 76d28cc593b3) │ CNC-03 scenario: VERIFIED │ Validation: PASS |
 | Scenario runner | ✅ | `python3.11 scripts/run_demo_scenario.py` → T+30→T+120 walk, CNC-03 CRITICAL, incident INC-20261005-001 |
-| Live API smoke (N2) | ✅ | uvicorn → `/api/factory/lines` 5 lines · `/api/machines/CNC-03/context` full inspector payload · advance 30 → 19/1/1/1/1 + incident · reset → 19/2/0/1/1, 0 incidents |
-| Visual verification (browser) | ⏳ | no connected desktop browser in this environment — manual checklist at `docs/EVIDENCE/demo/manual-twin-checklist.md` |
+| Live API smoke (N3) | ✅ | uvicorn → reset → advance +30: watcher escalated, CNC-03 → MAINTENANCE, JB-0005 PAUSED, WO-0005 source=AGENT, incident RESOLVING, run `RUN-20261005-0001` VERIFIED (5/5 checks). Recovery flow (`fail_first_work_order`): work-order tool FAILED → RECOVERING → retry → VERIFIED (24 steps). Both flows ran in REAL LLM mode (openrouter/free). |
+| Visual verification (browser) | ⏳ | no connected desktop browser in this environment — manual checklist at `docs/EVIDENCE/demo/manual-twin-checklist.md` (to be extended for the agent timeline) |
 | neatlogs SDK doctor (local) | ✅ | `python -m neatlogs doctor --local --json` → pass, v1.4.26, doctor/v2, schema 2 |
-| neatlogs doctor (probe) | ⏳ | awaits NEATLOGS_API_KEY (unchanged; no fake traces — agents don't exist yet) |
+| neatlogs runtime spans | ✅ (local wall) | `lazy_span` from `observability.py` emits real spans under an initialised SDK (test key → 401 wall as expected); disabled cleanly with no key. Real dashboard traces await a project NEATLOGS_API_KEY |
+| neatlogs doctor (probe) | ⏳ | awaits NEATLOGS_API_KEY (no fake traces — never fabricated) |
 | Snowflake/Cortex/CoCo grep | ✅ | 0 matches in app code/docs (PROVENANCE.md historical mention only) |
 | Entire enabled | ✅ | `entire status` → Enabled · branch main; `entire checkpoint list` → **0 checkpoints** (recorded honestly) |
 
@@ -149,15 +218,18 @@
 
 | Sponsor | Status |
 |---|---|
-| neatlogs | ✅ foundation integrated + verified locally (doctor pass); probe/traces need a project key |
-| Entire | ✅ CLI 0.10.5 installed, repo enabled on `main`, hooks wired for 8 agents; `entire checkpoint list` reports **0 checkpoints** so far |
+| neatlogs | ✅ real runtime spans on the agent workflow (WORKFLOW/AGENT/TOOL/CHAIN) + OpenAI-compatible LLM wrap; verified with a test key (401 wall expected). Project key still pending → local status `disabled` |
+| Entire | ✅ CLI 0.11.4 installed, repo enabled on `main`; `entire checkpoint list` reports **0 checkpoints** so far |
 | cfo.ai | ⏳ not started by design — BUSINESS_PLAN.md is a placeholder (`NOT YET MODELLED IN CFO.AI`) |
 
 ## Demo Status
 
-- **Demo-able now (N2)**: `/` Command Center with live counts, `/twin` visual factory floor with
-  23 machines on 5 labelled lines, hover/select/inspect with real telemetry and trend charts,
-  Reset/+10/+30/+60 controls, and the CNC-03 WARNING → CRITICAL transition with a visible
-  incident. `scripts/run_demo_scenario.py` prints the same arc headlessly.
-- **Not demo-able yet**: no agents (N3), no ML predictions, no finance pages.
+- **Demo-able now (N3)**: everything from N2 **plus the autonomous loop** — advance +30 min and
+  the watcher escalates, the coordinator assigns the maintenance agent, which investigates with
+  real tools, containment runs (urgent AGENT work order + machine to MAINTENANCE + running job
+  paused), a separate verifier re-reads the world and the run ends VERIFIED — visible as a live
+  timeline inside `/twin` with the twin turning CNC-03 blue/gray. `scripts/run_agent_demo.py`
+  prints both the normal and recovery arcs headlessly; the recovery checkbox re-runs it with a
+  deterministic tool failure.
+- **Not demo-able yet**: production/loss + finance agents (N4), ML predictions, workforce page.
 - **Judge-ready point**: N7 per plan §K (deterministic flagship scenario + evidence pack).

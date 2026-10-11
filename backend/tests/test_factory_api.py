@@ -83,7 +83,9 @@ def test_machine_telemetry_404(client: TestClient) -> None:
 
 def test_incidents_endpoint(client: TestClient) -> None:
     # Seeded world has no incidents yet; advance one tick to open the scenario one.
-    client.post("/api/demo/advance", json={"minutes": 10})
+    # Agents are off here so this test observes the pure simulation state; the
+    # autonomous response is covered in test_agents_api.py.
+    client.post("/api/demo/advance", json={"minutes": 10, "trigger_agents": False})
 
     incidents = client.get("/api/incidents").json()
     assert len(incidents) >= 1

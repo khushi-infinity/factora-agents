@@ -12,6 +12,7 @@ import {
   type MachineContext,
   type TwinMachine,
 } from '../lib/factory'
+import { fetchAgentStatus, type AgentRun, type AgentStatus } from '../lib/agents'
 import {
   LINE_ORDER,
   STATE_COLORS,
@@ -25,6 +26,7 @@ import {
 const TwinScene = lazy(() => import('../components/twin/TwinScene'))
 const MachineInspector = lazy(() => import('../components/twin/MachineInspector'))
 const TwinFallback = lazy(() => import('../components/twin/TwinFallback'))
+const AgentActivity = lazy(() => import('../components/AgentActivity'))
 
 /** Non-WebGL browsers must still get a usable twin (N2 §14). */
 function webglAvailable(): boolean {
@@ -79,6 +81,9 @@ export default function TwinPage() {
   const [legendOpen, setLegendOpen] = useState(true)
   const [filterLine, setFilterLine] = useState<string | null>(null)
   const [webgl] = useState<boolean>(() => webglAvailable())
+  const [agentRun, setAgentRun] = useState<AgentRun | null>(null)
+  const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null)
+  const [recoveryMode, setRecoveryMode] = useState(false)
 
   const refresh = useCallback(async (pulseFrom: TwinMachine[] | null) => {
     const [snap, list] = await Promise.all([fetchFactorySnapshot(), fetchMachines()])
@@ -105,15 +110,17 @@ export default function TwinPage() {
     let cancelled = false
     void (async () => {
       try {
-        const [snap, list, lineList] = await Promise.all([
+        const [snap, list, lineList, agentInfo] = await Promise.all([
           fetchFactorySnapshot(),
           fetchMachines(),
           fetchLines(),
+          fetchAgentStatus(),
         ])
         if (cancelled) return
         setSnapshot(snap)
         setMachines(list)
         setLines(lineList)
+        setAgentStatus(agentInfo)
         // The scene starts focused on CNC-03, so the inspector must agree with it.
         if (list.some((m) => m.machine_id === SHOWCASE_MACHINE)) {
           await loadContext(SHOWCASE_MACHINE)
@@ -132,7 +139,12 @@ export default function TwinPage() {
       setBusy(true)
       setError(null)
       try {
-        await advanceSimulation(minutes)
+        // Advancing IS the trigger: the watcher runs inside this call and a
+        // critical incident starts an autonomous run without a button press.
+        const result = await advanceSimulation(minutes, {
+          failFirstWorkOrder: recoveryMode,
+        })
+        setAgentRun(result.agent_runs.at(-1) ?? null)
         await refresh(machines)
         if (selectedId) await loadContext(selectedId)
       } catch (e) {
@@ -141,7 +153,7 @@ export default function TwinPage() {
         setBusy(false)
       }
     },
-    [refresh, machines, selectedId, loadContext],
+    [refresh, machines, selectedId, loadContext, recoveryMode],
   )
 
   const handleReset = useCallback(async () => {
@@ -149,6 +161,7 @@ export default function TwinPage() {
     setError(null)
     try {
       await resetSimulation()
+      setAgentRun(null)
       await refresh(null) // no pulse on a deterministic reset
       if (selectedId) await loadContext(selectedId)
     } catch (e) {
@@ -237,6 +250,18 @@ export default function TwinPage() {
           <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 font-mono text-sm text-slate-700">
             {snapshot.clock}
           </span>
+          {agentStatus && (
+            <span
+              className={`rounded-lg border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${
+                agentStatus.mode === 'REAL LLM'
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                  : 'border-amber-300 bg-amber-50 text-amber-700'
+              }`}
+              title={agentStatus.detail}
+            >
+              {agentStatus.mode}
+            </span>
+          )}
           <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700">
             <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
             LIVE SIM
@@ -263,6 +288,19 @@ export default function TwinPage() {
         <div className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700">
           {error}
         </div>
+      )}
+
+      {/* autonomous response (N3): the watcher's run, as an activity timeline */}
+      {agentRun && (
+        <Suspense
+          fallback={
+            <div className="rounded-xl border border-blue-200 bg-white px-4 py-3 text-xs text-slate-500">
+              Loading agent activity…
+            </div>
+          }
+        >
+          <AgentActivity run={agentRun} onClose={() => setAgentRun(null)} />
+        </Suspense>
       )}
 
       <div className="flex min-h-0 flex-1 gap-3">
@@ -383,6 +421,16 @@ export default function TwinPage() {
               >
                 Reset View
               </button>
+              <label className="ml-3 flex cursor-pointer items-center gap-1.5 text-[11px] text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={recoveryMode}
+                  onChange={(e) => setRecoveryMode(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-amber-600"
+                />
+                Demo recovery scenario
+                <span className="text-slate-400">(first work order fails)</span>
+              </label>
             </div>
             <span className="text-[11px] text-slate-500">
               Simulation time is authoritative from FactoryWorld — shown in the header, never the

@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .api.agents import router as agents_router
 from .api.factory import router as factory_router
 from .api.health import router as health_router
 from .config import get_settings
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, prefix="/api")
     app.include_router(factory_router, prefix="/api")
+    app.include_router(agents_router, prefix="/api")
 
     return app
 
