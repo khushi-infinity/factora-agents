@@ -29,6 +29,7 @@ const machines: TwinMachine[] = IDS.map(({ id, line, i }) => ({
   line,
   state: stateOf(id),
   health_score: 90,
+  output_per_hour: 30,
   x_m: 6 + i * 5,
   y_m: line === 'ASSEMBLY_LINE' ? 2 : line === 'CNC_LINE' ? 18 : line === 'PRESS_LINE' ? 34 : line === 'PACKAGING_LINE' ? 50 : 66,
   z_m: 0,

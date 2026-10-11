@@ -7,28 +7,22 @@ is used. No network, no key, reproducible.
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from app.agents import DeterministicAgentModel
 from app.agents.coordinator import RunOptions, respond_to_escalation
 from app.agents.finance import FinanceAssessment as FAModel
+from app.agents.llm import TASK_FINANCE_ASSESSMENT
 from app.agents.models import (
-    ActionKind,
-    ProductionAssessment,
     FinanceAssessment,
-    OptimisationDecision,
+    ProductionAssessment,
 )
 from app.agents.optimisation import (
     evaluate_optimisation_policy,
-    verify_optimisation,
 )
 from app.agents.production import assess as production_assess
-from app.agents.tools import ToolContext, execute_tool, N4_TOOLS
-from app.agents.verification import verify_maintenance_containment
+from app.agents.tools import ToolContext, execute_tool
 from app.agents.watcher import evaluate_world
-from app.agents.llm import TASK_PRODUCTION_ASSESSMENT, TASK_FINANCE_ASSESSMENT
 from app.world import repositories as repo
 from app.world.simulation import FactoryWorld, reset_world_singleton
 
@@ -112,7 +106,6 @@ def test_production_agent_structured_recommendation(
     contained_world: FactoryWorld,
 ) -> None:
     """The Production agent returns a validated ProductionAssessment."""
-    from app.agents.production import assess as production_assess
 
     ctx = ToolContext(world=contained_world)
     ctx.phase_machine_id = "CNC-03"
@@ -166,7 +159,7 @@ def test_finance_agent_structured_assessment(
     """The Finance agent returns a validated FinanceAssessment."""
     from app.agents.llm import complete_structured
 
-    ctx = ToolContext(world=contained_world)
+    ToolContext(world=contained_world)
     hints = {
         "tools": {
             "wait_cost_usd": 50.0,
@@ -334,12 +327,11 @@ def test_policy_blocks_when_excessive_cost(critical_world: FactoryWorld) -> None
 
 def test_reroute_tool_valid(critical_world: FactoryWorld) -> None:
     """The reroute_production_job tool executes a valid reroute when conditions met."""
-    from app.agents.tools_n4 import RerouteJobArgs
 
     # Ensure a paused job exists on CNC-03
     repo.pause_running_jobs(critical_world.conn, "CNC-03")
 
-    result = execute_tool(
+    execute_tool(
         ToolContext(world=critical_world),
         "reroute_production_job",
         {"job_id": "JB-0005", "target_machine_id": "CNC-06",
@@ -397,12 +389,13 @@ def test_e2e_critical_to_optimised(critical_world: FactoryWorld) -> None:
 
     # Step 4: Check paused job exists
     from app.agents.tools import ToolContext
-    paused = execute_tool(ToolContext(world=critical_world), "get_paused_jobs", {"machine_id": MACHINE})
-    assert paused.ok, f"Expected paused jobs after containment"
+    paused = execute_tool(
+        ToolContext(world=critical_world), "get_paused_jobs", {"machine_id": MACHINE}
+    )
+    assert paused.ok, "Expected paused jobs after containment"
     job_id = paused.output["paused_jobs"][0]["job_id"]
 
     # Step 4: Production assessment
-    from app.agents.production import assess as production_assess
     prod_ctx = ToolContext(world=critical_world, phase_machine_id="CNC-03")
     prod_assess = production_assess(
         critical_world, prod_ctx, DeterministicAgentModel(),
@@ -428,7 +421,6 @@ def test_e2e_critical_to_optimised(critical_world: FactoryWorld) -> None:
     assert finance.recommendation in ("REROUTE", "WAIT")
 
     # Step 6: Optimisation policy
-    from app.agents.production import ProductionAssessment as PA
     decision, _, _ = evaluate_optimisation_policy(
         critical_world,
         job_id=job_id,

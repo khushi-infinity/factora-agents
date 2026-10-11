@@ -98,7 +98,9 @@ def assess(
     on_event=None,
 ) -> ProductionAssessment:
     """Retrieve the paused job + candidates through tools; return the assessment."""
-    paused = execute_tool(ctx, "get_paused_jobs", {"machine_id": ctx.phase_machine_id} if ctx.phase_machine_id else {})
+    paused = execute_tool(
+        ctx, "get_paused_jobs", {"machine_id": ctx.phase_machine_id} if ctx.phase_machine_id else {}
+    )
     job = world.get_job(job_id)
     if job is None or not paused.ok:
         raise RuntimeError(

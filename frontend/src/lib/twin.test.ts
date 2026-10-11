@@ -27,6 +27,7 @@ const machine = (
   line,
   state,
   health_score: 80,
+  output_per_hour: 30,
   x_m: x,
   y_m: y,
   z_m: 0,

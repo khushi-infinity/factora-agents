@@ -18,6 +18,7 @@ const machines: TwinMachine[] = [
     line: 'CNC_LINE',
     state: 'WARNING',
     health_score: 63,
+    output_per_hour: 30,
     x_m: 16,
     y_m: 18,
     z_m: 0,

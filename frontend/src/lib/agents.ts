@@ -91,6 +91,19 @@ export const RUN_TONE: Record<RunStatus, string> = {
   ESCALATED: 'var(--state-critical)',
 }
 
+export const RUN_LABEL: Record<RunStatus, string> = {
+  VERIFIED: 'VERIFIED',
+  ESCALATED: 'ESCALATED TO HUMAN',
+  FAILED: 'FAILED',
+  DETECTED: 'DETECTED',
+  INVESTIGATING: 'INVESTIGATING',
+  PLANNING: 'PLANNING',
+  ACTION_PENDING: 'ACTION PENDING',
+  ACTING: 'ACTING',
+  VERIFYING: 'VERIFYING',
+  RECOVERING: 'RECOVERING',
+}
+
 /** Which steps deserve a visible marker in the activity timeline. */
 export const STEP_TONE: Record<string, string> = {
   HANDOFF: 'var(--state-warning)',

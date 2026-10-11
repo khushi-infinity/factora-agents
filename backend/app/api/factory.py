@@ -18,6 +18,7 @@ from .schemas_agents import AgentRunOut, run_out_from_row
 from .schemas_factory import (
     AdvanceRequest,
     AdvanceResponse,
+    AgentRunSummary,
     FactorySnapshot,
     IncidentOut,
     LineOut,
@@ -25,10 +26,19 @@ from .schemas_factory import (
     MachineDetail,
     MachineOut,
     MaintenanceOut,
+    OEEFactoryOut,
+    OEELineOut,
+    OEEMachineOut,
+    OptimisationOut,
+    PlannerItemOut,
+    PredictiveRiskOut,
     ProductionJobOut,
     ResetResponse,
+    SparePartOut,
     TelemetryOut,
+    WorkOrderCreate,
     WorkOrderOut,
+    WorkOrderUpdate,
 )
 
 router = APIRouter(tags=["factory"])
@@ -266,3 +276,169 @@ def demo_advance(request: AdvanceRequest) -> AdvanceResponse:
         agent_runs=agent_runs,
         watcher=watcher_state,
     )
+
+
+# ── Spare Parts ─────────────────────────────────────────────────────────────
+
+@router.get("/spare-parts", response_model=list[SparePartOut])
+def spare_parts() -> list[SparePartOut]:
+    world = _world()
+    return [SparePartOut(**r) for r in repo.list_spare_parts(world.conn)]
+
+
+@router.get("/spare-parts/{part_id}", response_model=SparePartOut)
+def spare_part_detail(part_id: str) -> SparePartOut:
+    world = _world()
+    part = repo.get_spare_part(world.conn, part_id)
+    if part is None:
+        raise HTTPException(status_code=404, detail=f"unknown part {part_id}")
+    return SparePartOut(**part)
+
+
+# ── Work Orders ─────────────────────────────────────────────────────────────
+
+@router.get("/work-orders", response_model=list[WorkOrderOut])
+def work_orders(open_only: bool = Query(default=False)) -> list[WorkOrderOut]:
+    world = _world()
+    return [WorkOrderOut(**r) for r in repo.list_work_orders(world.conn, open_only=open_only)]
+
+
+@router.get("/work-orders/{work_order_id}", response_model=WorkOrderOut)
+def work_order_detail(work_order_id: str) -> WorkOrderOut:
+    world = _world()
+    wo = repo.list_work_orders(world.conn, open_only=False)
+    found = next((r for r in wo if r["work_order_id"] == work_order_id), None)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"unknown work order {work_order_id}")
+    return WorkOrderOut(**found)
+
+
+@router.post("/work-orders", response_model=WorkOrderOut)
+def create_work_order(payload: WorkOrderCreate) -> WorkOrderOut:
+    world = _world()
+    wo = {
+        "work_order_id": world.next_id("work_orders", "work_order_id", "WO"),
+        "machine_id": payload.machine_id,
+        "issue": payload.issue,
+        "proposed_action": payload.proposed_action,
+        "status": "OPEN",
+        "priority": payload.priority,
+        "scheduled_for": None,
+        "estimated_cost_usd": payload.estimated_cost_usd,
+        "source": "MANUAL",
+        "created_at": world.clock().iso(),
+    }
+    repo.insert_work_order(world.conn, wo)
+    with world.conn:
+        pass
+    return WorkOrderOut(**wo)
+
+
+@router.patch("/work-orders/{work_order_id}", response_model=WorkOrderOut)
+def update_work_order(work_order_id: str, payload: WorkOrderUpdate) -> WorkOrderOut:
+    world = _world()
+    wo = repo.work_orders_for_machine(world.conn, None, open_only=False)
+    found = next((r for r in wo if r["work_order_id"] == work_order_id), None)
+    if found is None:
+        raise HTTPException(status_code=404, detail=f"unknown work order {work_order_id}")
+    
+    updates = {}
+    if payload.status is not None:
+        updates["status"] = payload.status
+    if payload.priority is not None:
+        updates["priority"] = payload.priority
+    if payload.estimated_cost_usd is not None:
+        updates["estimated_cost_usd"] = payload.estimated_cost_usd
+    
+    if updates:
+        repo.update_work_order(world.conn, work_order_id, updates)
+        with world.conn:
+            pass
+    
+    wo = repo.work_orders_for_machine(world.conn, None, open_only=False)
+    updated = next((r for r in wo if r["work_order_id"] == work_order_id), None)
+    return WorkOrderOut(**updated)
+
+
+# ── OEE ─────────────────────────────────────────────────────────────────────
+
+@router.get("/oee", response_model=OEEFactoryOut)
+def oee_factory() -> OEEFactoryOut:
+    world = _world()
+    oee_data = world.compute_oee()
+    return OEEFactoryOut(**oee_data)
+
+
+@router.get("/oee/lines", response_model=list[OEELineOut])
+def oee_lines() -> list[OEELineOut]:
+    world = _world()
+    oee_data = world.compute_oee()
+    return [OEELineOut(**line) for line in oee_data["lines"]]
+
+
+@router.get("/oee/machines", response_model=list[OEEMachineOut])
+def oee_machines() -> list[OEEMachineOut]:
+    world = _world()
+    oee_data = world.compute_oee()
+    return [OEEMachineOut(**m) for m in oee_data["machines"]]
+
+
+# ── Predictive Maintenance ──────────────────────────────────────────────────
+
+@router.get("/predictive-maintenance", response_model=list[PredictiveRiskOut])
+def predictive_maintenance() -> list[PredictiveRiskOut]:
+    world = _world()
+    risks = world.compute_predictive_risk()
+    return [PredictiveRiskOut(**r) for r in risks]
+
+
+# ── Planner ──────────────────────────────────────────────────────────────────
+
+@router.get("/planner", response_model=list[PlannerItemOut])
+def planner() -> list[PlannerItemOut]:
+    world = _world()
+    items = world.get_planner_items()
+    return [PlannerItemOut(**item) for item in items]
+
+
+# ── Agent Runs ──────────────────────────────────────────────────────────────
+
+@router.get("/agent-runs", response_model=list[AgentRunSummary])
+def agent_runs(incident_id: str | None = Query(default=None)) -> list[AgentRunSummary]:
+    world = _world()
+    runs = world.get_agent_runs(incident_id)
+    return [AgentRunSummary(
+        run_id=r["run_id"],
+        incident_id=r["incident_id"],
+        machine_id=r["machine_id"],
+        goal=r["goal"],
+        status=r["status"],
+        active_agent=r["active_agent"],
+        model_provider=r["model_provider"],
+        model_name=r["model_name"],
+        outcome=r["outcome"],
+        started_at=r["started_at"],
+        completed_at=r["completed_at"],
+        fail_first_work_order=r["fail_first_work_order"],
+    ) for r in runs]
+
+
+@router.get("/agent-runs/{run_id}/detail", response_model=dict)
+def agent_run_detail(run_id: str) -> dict:
+    world = _world()
+    run = world.get_agent_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"unknown agent run {run_id}")
+    steps = world.get_agent_steps(run_id)
+    return {"run": run, "steps": steps}
+
+
+# ── Optimisation ─────────────────────────────────────────────────────────────
+
+@router.get("/optimisation/{incident_id}", response_model=OptimisationOut)
+def optimisation_detail(incident_id: str) -> OptimisationOut:
+    world = _world()
+    opt = world.get_optimisation(incident_id)
+    if opt is None:
+        raise HTTPException(status_code=404, detail=f"no optimisation for incident {incident_id}")
+    return OptimisationOut(**opt)

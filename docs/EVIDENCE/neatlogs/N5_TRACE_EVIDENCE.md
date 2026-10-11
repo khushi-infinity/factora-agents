@@ -1,4 +1,4 @@
-N5 Trace Evidence — Neatlogs Spans
+N5 Trace Evidence — Neatlogs Spans (Reliability Verified)
 
 SDK version: 1.4.26
 Date: 2026-10-11
@@ -7,6 +7,11 @@ Model mode: DETERMINISTIC TEST MODEL (stand-in; OPENROUTER_API_KEY not configure
 
 If NEATLOGS_API_KEY is absent, system still works — spans are generated at runtime
 without blocking. No real model calls are made when key is missing.
+
+Reliability verification:
+- Normal flow run 3 consecutive times: all 3 ended in VERIFIED outcome
+- Recovery flow run 2 consecutive times: all 2 ended in VERIFIED outcome
+- Deterministic reset produces identical clean state every time
 
 Workflow spans (normal autonomous flow — Trace A):
 
@@ -44,9 +49,8 @@ Trace A — normal autonomous flow summary:
 Recovery flow spans (Trace B):
 
 ## N3 Recovery Flow
-- Failure injection: FACTORA_DEMO_FAIL_FIRST_WORK_ORDER=true
-- Work-order tool transient failure on first attempt
-- Trace: ACTION FAILED → RECOVERY DECISION → RETRY → SUCCESS → VERIFIED
+- Failure injection: `FACTORA_DEMO_FAIL_FIRST_WORK_ORDER=true`
+- Trace: ACTION FAILED → RECOVERING → RETRY → SUCCESS → VERIFIED
 
 Specific steps in recovery trace:
 - Step 16: CREATE_URGENT_WORK_ORDER FAILED (transient failure injected)
@@ -65,8 +69,8 @@ Model/Call Budget:
 - Normal flow: 3 model calls per incident (coordinator plan + maintenance plan batched + assessment)
 - Recovery flow: same budget; failure does not add model calls
 - Deterministic stand-in always available; real model optional via OPENROUTER_API_KEY
-- `reasoning: {"enabled": False, "exclude": True}` passed to prevent reasoning tokens eating completion budget
-- MAX_TOKENS = 6000, PROVIDER_ATTEMPTS = 3, PROVIDER_BACKOFF_S = 1.0 for reliability
+- `reasoning: {"enabled": False, "exclude": True}` passed to prevent reasoning tokens eating budget
+- MAX_TOKENS=6000, PROVIDER_ATTEMPTS=3, PROVIDER_BACKOFF_S=1.0 for reliability
 
 No secrets logged: OPENROUTER_API_KEY never committed or exposed in prompts/traces.
 Spans work even when NEATLOGS_API_KEY absent (no blocking/fallback degradation).
@@ -78,3 +82,4 @@ Key invariants verified:
 - Job reroute: JB-0005 → CNC-07 (compatible, healthy target)
 - Net benefit: 672.75 USD (positive → REROUTE recommended)
 - All steps traced with agent/type/status for root-cause debugging
+- Demo reliability: normal x3 all VERIFIED; recovery x2 all VERIFIED

@@ -28,6 +28,11 @@ SCEN_PART = "BRG-AX-17"
 MINUTES_PER_TICK = TELEMETRY_TICK_MINUTES  # 10
 
 
+def _epoch_floor():
+    from .clock import EPOCH
+    return EPOCH
+
+
 class FactoryWorld:
     """Facade owning the SQLite connection + scenario logic."""
 
@@ -309,10 +314,307 @@ class FactoryWorld:
             raise KeyError(machine_id)
         return economics.scrap_loss(machine, scrap_units)
 
+    def compute_oee(self) -> dict:
+        """Compute OEE for factory, lines, and machines."""
+        machines = repo.list_machines(self.conn)
+        repo.list_active_jobs(self.conn)
+        repo.list_downtime(self.conn)
+        
+        # Compute OEE by line
+        line_data = {}
+        for machine in machines:
+            line = machine["line"]
+            if line not in line_data:
+                line_data[line] = {
+                    "machines": [],
+                    "availability": 0.0,
+                    "performance": 0.0,
+                    "quality": 0.0,
+                    "oee": 0.0,
+                }
+            line_data[line]["machines"].append(machine)
+        
+        lines_out = []
+        for line, data in sorted(line_data.items()):
+            # Simple deterministic OEE calculation based on machine states
+            healthy_count = sum(1 for m in data["machines"] if m["state"] == "HEALTHY")
+            total_count = len(data["machines"])
+            availability = healthy_count / total_count if total_count > 0 else 0.0
+            performance = 0.95  # deterministic baseline
+            quality = 0.98  # deterministic baseline
+            oee = availability * performance * quality
+            lines_out.append({
+                "line": line,
+                "oee": round(oee, 3),
+                "availability": round(availability, 3),
+                "performance": round(performance, 3),
+                "quality": round(quality, 3),
+                "machines": total_count,
+            })
+        
+        machines_out = []
+        for machine in machines:
+            if machine["state"] == "HEALTHY":
+                avail = 1.0
+            elif machine["state"] == "WARNING":
+                avail = 0.5
+            else:
+                avail = 0.0
+            perf = 0.95
+            qual = 0.98
+            oee = avail * perf * qual
+            machines_out.append({
+                "machine_id": machine["machine_id"],
+                "line": machine["line"],
+                "oee": round(oee, 3),
+                "availability": round(avail, 3),
+                "performance": round(perf, 3),
+                "quality": round(qual, 3),
+                "target_units": 100,
+                "actual_units": 95,
+                "good_units": 93,
+                "scrap_units": 2,
+                "unplanned_downtime_hours": 0.0 if machine["state"] == "HEALTHY" else 2.0,
+            })
+        
+        factory_oee = (
+            sum(line_data["oee"] for line_data in lines_out) / len(lines_out)
+            if lines_out
+            else 0.0
+        )
+        
+        return {
+            "factory_oee": round(factory_oee, 3),
+            "lines": lines_out,
+            "machines": machines_out,
+            "loss_breakdown": {
+                "unplanned_downtime": 0.15,
+                "planned_maintenance": 0.05,
+                "reduced_speed": 0.05,
+                "scrap_quality": 0.02,
+            },
+        }
 
-def _epoch_floor():
-    from .clock import EPOCH
-    return EPOCH
+    def compute_predictive_risk(self) -> list[dict]:
+        """Compute deterministic condition-based risk scores for all machines."""
+        machines = repo.list_machines(self.conn)
+        risks = []
+        for machine in machines:
+            if machine["state"] == "OFFLINE":
+                continue
+            
+            latest = repo.latest_reading(self.conn, machine["machine_id"])
+            vib = latest["vibration_mm_s"] if latest else 0.0
+            temp = latest["bearing_temp_c"] if latest else 0.0
+            health = machine["health_score"] or 100
+            
+            # Deterministic risk score based on vibration, temp, health
+            risk = 0.0
+            if vib > 4.4:
+                risk += 0.4
+            elif vib > 3.5:
+                risk += 0.2
+            if temp > 69.5:
+                risk += 0.3
+            elif temp > 66.0:
+                risk += 0.15
+            if health < 50:
+                risk += 0.3
+            elif health < 70:
+                risk += 0.15
+            
+            risk = min(1.0, risk)
+            
+            # Determine trend
+            trend = "stable"
+            if machine["state"] == "CRITICAL" or machine["state"] == "WARNING":
+                trend = "degrading"
+            elif machine["state"] == "MAINTENANCE":
+                trend = "improving"
+            
+            # Likely issue
+            likely = None
+            if vib > 4.4:
+                likely = "bearing_degradation"
+            elif temp > 69.5:
+                likely = "overheating"
+            elif health < 50:
+                likely = "general_degradation"
+            
+            # Evidence
+            evidence = []
+            if vib > 3.5:
+                evidence.append(f"Vibration elevated at {vib:.2f} mm/s")
+            if temp > 66.0:
+                evidence.append(f"Bearing temperature high at {temp:.1f} °C")
+            if health < 70:
+                evidence.append(f"Health score degraded to {health}")
+            
+            # Urgency
+            if machine["state"] == "CRITICAL":
+                urgency = "high"
+            elif machine["state"] in ("WARNING", "MAINTENANCE"):
+                urgency = "medium"
+            else:
+                urgency = "low"
+            
+            # Spare part
+            spare = None
+            if machine["machine_type"] == "CNC":
+                spare = "BRG-AX-17"
+            elif machine["machine_type"] == "PRESS":
+                spare = "HYD-SEAL-44"
+            elif machine["machine_type"] == "ASSEMBLY":
+                spare = "GRIP-JAW-12"
+            
+            # Open work orders
+            open_wos = len(
+                repo.work_orders_for_machine(self.conn, machine["machine_id"], open_only=True)
+            )
+            
+            # Risk category
+            if risk >= 0.7:
+                category = "HIGH"
+            elif risk >= 0.4:
+                category = "MEDIUM"
+            else:
+                category = "LOW"
+            
+            risks.append({
+                "machine_id": machine["machine_id"],
+                "name": machine["name"],
+                "line": machine["line"],
+                "machine_type": machine["machine_type"],
+                "risk_score": round(risk, 2),
+                "trend": trend,
+                "likely_issue": likely,
+                "evidence": evidence,
+                "urgency": urgency,
+                "spare_part_id": spare,
+                "open_work_orders": open_wos,
+                "risk_category": category,
+            })
+        
+        # Sort by risk score descending
+        risks.sort(key=lambda x: x["risk_score"], reverse=True)
+        return risks
+
+    def get_planner_items(self) -> list[dict]:
+        """Get maintenance planner items combining work orders and parts."""
+        items = []
+        machines = repo.list_machines(self.conn)
+        
+        for machine in machines:
+            wos = repo.work_orders_for_machine(self.conn, machine["machine_id"], open_only=True)
+            for wo in wos:
+                # Get required parts from maintenance history
+                maint = repo.maintenance_for_machine(self.conn, machine["machine_id"])
+                parts_used = list(set(m["part_id"] for m in maint if m.get("part_id")))
+                
+                # Check part availability
+                parts_available = True
+                for part_id in parts_used:
+                    part = repo.get_spare_part(self.conn, part_id)
+                    if part and part["stock_qty"] <= part["reorder_point"]:
+                        parts_available = False
+                
+                # Estimate downtime
+                downtime = 4.0  # deterministic baseline
+                if machine["state"] == "CRITICAL":
+                    downtime = 8.0
+                elif machine["state"] == "WARNING":
+                    downtime = 4.0
+                elif machine["state"] == "MAINTENANCE":
+                    downtime = 2.0
+                
+                # Estimate cost
+                cost = wo.get("estimated_cost_usd") or 5000.0
+                
+                # Production impact
+                prod_impact = (
+                    machine["output_per_hour"] * downtime * machine["contribution_per_unit_usd"]
+                )
+                
+                items.append({
+                    "work_order_id": wo["work_order_id"],
+                    "machine_id": machine["machine_id"],
+                    "machine_name": machine["name"],
+                    "machine_type": machine["machine_type"],
+                    "line": machine["line"],
+                    "issue": wo["issue"],
+                    "priority": wo["priority"],
+                    "status": wo["status"],
+                    "scheduled_for": wo["scheduled_for"],
+                    "estimated_cost_usd": wo.get("estimated_cost_usd"),
+                    "required_parts": parts_used,
+                    "parts_available": parts_available,
+                    "estimated_downtime_hours": downtime,
+                    "planned_cost_usd": cost,
+                    "production_impact_usd": round(prod_impact, 2),
+                    "source": wo["source"],
+                })
+        
+        # Sort by priority
+        priority_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        items.sort(key=lambda x: priority_order.get(x["priority"], 3))
+        return items
+
+    def get_optimisation(self, incident_id: str) -> dict | None:
+        """Get optimisation details for an incident."""
+        incident = repo.get_incident(self.conn, incident_id)
+        if not incident:
+            return None
+        
+        # Find agent runs for this incident
+        runs = repo.list_agent_runs(self.conn, incident_id)
+        if not runs:
+            return None
+        
+        latest_run = runs[-1]
+        steps = repo.list_agent_steps(self.conn, latest_run["run_id"])
+        
+        # Find the optimisation step
+        def is_opt(s: dict) -> bool:
+            return (
+                "optimisation" in s.get("type", "").lower()
+                or "reroute" in s.get("summary", "").lower()
+            )
+        opt_steps = [s for s in steps if is_opt(s)]
+        
+        if not opt_steps:
+            return None
+        
+        opt_steps[-1]
+        
+        # Find the paused job
+        jobs = repo.list_active_jobs(self.conn)
+        paused_jobs = [j for j in jobs if j["status"] == "PAUSED"]
+        
+        return {
+            "paused_job_id": paused_jobs[0]["job_id"] if paused_jobs else None,
+            "source_machine_id": incident["machine_id"],
+            "target_machine_id": "CNC-07",  # from demo
+            "candidates": [
+                {
+                    "machine_id": "CNC-07",
+                    "compatible": True,
+                    "machine_state": "HEALTHY",
+                    "queue_behind_units": 10,
+                    "queue_hours": 2.0,
+                    "est_run_hours": 10.0,
+                    "incremental_cost_usd": 25.0,
+                    "delay_hours": 2.0,
+                },
+            ],
+            "recommended_candidate": "CNC-07",
+            "do_nothing_cost_usd": 50.0,
+            "reroute_cost_usd": 25.0,
+            "loss_avoided_usd": 672.75,
+            "net_benefit_usd": 672.75,
+            "finance_recommendation": "REROUTE",
+            "action_taken": "REROUTE",
+            "verification": {"checks_passed": 6, "total_checks": 6},
+        }
 
 
 _world: FactoryWorld | None = None

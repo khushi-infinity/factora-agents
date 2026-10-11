@@ -182,12 +182,30 @@ def work_orders_for_machine(conn: sqlite3.Connection, machine_id: str,
         (machine_id,)))
 
 
+def list_work_orders(conn: sqlite3.Connection, open_only: bool = False) -> list[dict]:
+    """All work orders, optionally filtered to open ones."""
+    extra = " WHERE status IN ('OPEN','ASSIGNED','IN_PROGRESS')" if open_only else ""
+    return _rows(conn.execute(
+        f"SELECT * FROM work_orders{extra} ORDER BY work_order_id"))
+
+
 def insert_work_order(conn: sqlite3.Connection, wo: dict[str, Any]) -> None:
     conn.execute(
         "INSERT INTO work_orders(work_order_id, machine_id, issue, proposed_action, status,"
         " priority, scheduled_for, estimated_cost_usd, source, created_at)"
         " VALUES (:work_order_id,:machine_id,:issue,:proposed_action,:status,:priority,"
         ":scheduled_for,:estimated_cost_usd,:source,:created_at)", wo)
+
+
+def update_work_order(
+    conn: sqlite3.Connection, work_order_id: str, updates: dict[str, Any]
+) -> None:
+    allowed = {"status", "priority", "estimated_cost_usd", "scheduled_for"}
+    cols = ", ".join(f"{key} = :{key}" for key in updates if key in allowed)
+    if not cols:
+        return
+    conn.execute(f"UPDATE work_orders SET {cols} WHERE work_order_id = :work_order_id",
+                 {**updates, "work_order_id": work_order_id})
 
 
 def insert_downtime(conn: sqlite3.Connection, event: dict[str, Any]) -> None:
