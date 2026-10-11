@@ -91,6 +91,13 @@ def jobs_for_machine(conn: sqlite3.Connection, machine_id: str,
         (machine_id,)))
 
 
+def list_active_jobs(conn: sqlite3.Connection) -> list[dict]:
+    """Every RUNNING/QUEUED/PAUSED job in the factory (N4 read)."""
+    return _rows(conn.execute(
+        "SELECT * FROM production_jobs"
+        " WHERE status IN ('RUNNING','QUEUED','PAUSED') ORDER BY job_id"))
+
+
 def get_job(conn: sqlite3.Connection, job_id: str) -> dict | None:
     row = conn.execute(
         "SELECT * FROM production_jobs WHERE job_id = ?", (job_id,)).fetchone()
@@ -113,6 +120,23 @@ def pause_running_jobs(conn: sqlite3.Connection, machine_id: str) -> list[str]:
             f"UPDATE production_jobs SET status = 'PAUSED' WHERE job_id IN ({marks})",
             job_ids)
     return job_ids
+
+
+def reroute_job(conn: sqlite3.Connection, job_id: str, new_machine_id: str) -> dict:
+    """Reassign one paused job to another machine and re-queue it (N4).
+
+    Reversible: the job keeps its quantities; only machine_id and status change
+    (PAUSED → QUEUED on the new machine). Nothing is cancelled, nothing bought.
+    """
+    job = get_job(conn, job_id)
+    if job is None:
+        raise LookupError(f"unknown job '{job_id}'")
+    previous = {"machine_id": job["machine_id"], "status": job["status"]}
+    conn.execute(
+        "UPDATE production_jobs SET machine_id = ?, status = 'QUEUED' WHERE job_id = ?",
+        (new_machine_id, job_id))
+    return {"job_id": job_id, "previous": previous,
+            "new": {"machine_id": new_machine_id, "status": "QUEUED"}}
 
 
 def count_jobs(conn: sqlite3.Connection) -> int:

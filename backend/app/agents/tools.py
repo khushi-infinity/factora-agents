@@ -61,11 +61,34 @@ class ToolContext:
     run_id: str | None = None
     incident_id: str | None = None
     fail_injector: FailureInjector = field(default_factory=FailureInjector)
+    # N4 helpers for the production/finance read tools (set per phase).
+    phase_machine_id: str | None = None
+    phase_paused_job_id: str | None = None
+
+    def incident_machine_id(self) -> str:
+        """The machine the run's optimisation phase is working on."""
+        if self.phase_machine_id:
+            return self.phase_machine_id
+        if self.incident_id:
+            incident = self.world.get_incident(self.incident_id)
+            return (incident or {}).get("machine_id") or ""
+        return ""
+
+    def incident_paused_job_id(self) -> str | None:
+        """The paused job the run's optimisation phase is working on."""
+        if self.phase_paused_job_id:
+            return self.phase_paused_job_id
+        machine_id = self.incident_machine_id()
+        if not machine_id:
+            return None
+        paused = [j for j in self.world.get_active_jobs_all()
+                  if j["machine_id"] == machine_id and j["status"] == "PAUSED"]
+        return paused[0]["job_id"] if paused else None
 
 
 # ── argument models ────────────────────────────────────────────────────────
 class MachineArgs(BaseModel):
-    machine_id: str = Field(min_length=3, max_length=32)
+    machine_id: str = Field(default="", max_length=32)
 
 
 class TelemetryArgs(MachineArgs):
@@ -246,6 +269,14 @@ TOOLS: dict[str, Tool] = {
              MaintenanceArgs, _place_machine_in_maintenance, "action"),
     )
 }
+
+# N4 tools register alongside the N3 set. The import must happen here, at the
+# bottom, because tools_n4 imports arg models back from this module — a top-of-
+# file import would hit this module half-initialised (ImportError → silent,
+# tools missing at runtime, exactly the bug to avoid).
+from .tools_n4 import N4_TOOLS  # noqa: E402  (deliberate bottom import)
+
+TOOLS.update(N4_TOOLS)
 
 
 def describe_tools(kind: Literal["read", "action"] | None = None) -> list[dict]:

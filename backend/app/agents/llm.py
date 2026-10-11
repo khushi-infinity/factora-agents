@@ -30,12 +30,15 @@ from .models import (
     InvestigationPlan,
     MaintenanceAssessment,
     MalformedOutputError,
+    ProductionAssessment,
     SpecialistAssignment,
 )
 
 TASK_COORDINATOR_ASSIGNMENT = "coordinator_assignment"
 TASK_INVESTIGATION_PLAN = "investigation_plan"
 TASK_MAINTENANCE_ASSESSMENT = "maintenance_assessment"
+TASK_PRODUCTION_ASSESSMENT = "production_assessment"      # N4
+TASK_FINANCE_ASSESSMENT = "finance_assessment"            # N4
 
 # Free OpenRouter models spend `max_tokens` on hidden reasoning too; leave room.
 MAX_TOKENS = 6000
@@ -230,6 +233,37 @@ class DeterministicAgentModel:
                     "specialist owns condition evidence, spare parts and work "
                     "orders."),
             ))
+        if task == TASK_PRODUCTION_ASSESSMENT:
+            # The numbers are already deterministic; the stand-in simply echoes
+            # the coordinator-computed pick inside the structured envelope.
+            return _json(ProductionAssessment(
+                paused_job_id=hints["tools"]["job_id"],
+                remaining_quantity=hints["tools"]["remaining_qty"],
+                recommended_candidate=hints["tools"]["recommended"],
+                est_incremental_cost_usd=hints["tools"]["incremental_cost_usd"],
+                expected_delay_hours=hints["tools"]["delay_hours"],
+                operational_loss_if_idle_usd=float(
+                    hints["tools"]["idle_cost_usd"] or 0.0),
+                confidence="high" if hints["tools"]["recommended"] else "low",
+                summary=(
+                    f"Deterministic candidate comparison confirms "
+                    f"{hints['tools']['recommended'] or 'WAIT'}: incremental "
+                    f"cost {hints['tools']['incremental_cost_usd']} USD vs an "
+                    f"idle cost of {hints['tools']['idle_cost_usd']} USD."),
+            ))
+        if task == TASK_FINANCE_ASSESSMENT:
+            from .finance import _deterministic  # reuse the deterministic verdict
+
+            payload = {
+                "wait_cost_usd": hints["tools"]["wait_cost_usd"],
+                "reroute_cost_usd": hints["tools"]["reroute_cost_usd"],
+                "candidate": hints["tools"]["candidate"],
+            }
+            benefit = {
+                "loss_avoided_usd": hints["tools"]["loss_avoided_usd"],
+                "net_benefit_usd": hints["tools"]["net_benefit_usd"],
+            }
+            return _json(_deterministic(payload, benefit))
         if task == TASK_INVESTIGATION_PLAN:
             machine_id = hints["machine"]["machine_id"]
             incident_id = hints["incident"]["incident_id"]

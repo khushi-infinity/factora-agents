@@ -218,6 +218,17 @@ class FactoryWorld:
         """Pause the machine's RUNNING jobs and report which ones (N3)."""
         return repo.pause_running_jobs(self.conn, machine_id)
 
+    def get_job(self, job_id: str) -> dict | None:
+        return repo.get_job(self.conn, job_id)
+
+    def reroute_job(self, job_id: str, new_machine_id: str) -> dict:
+        """N4 containment recovery: reassign a paused job through the service layer."""
+        return repo.reroute_job(self.conn, job_id, new_machine_id)
+
+    def get_active_jobs_all(self) -> list[dict]:
+        """Every active (RUNNING/QUEUED/PAUSED) job in the factory (N4 read)."""
+        return repo.list_active_jobs(self.conn)
+
     def get_recent_telemetry(self, machine_id: str, limit: int = 24) -> list[dict]:
         return repo.telemetry_history(self.conn, machine_id, limit=limit)
 

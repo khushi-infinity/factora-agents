@@ -70,6 +70,9 @@ class RunOptions:
     """Per-run knobs. The failure injection is demo-only and never random."""
 
     fail_first_work_order: bool = False
+    # N3 behaviour knob: the pure containment demo (scripts/run_agent_demo.py)
+    # can finish at maintenance VERIFIED without the N4 optimisation phase.
+    skip_optimisation: bool = False
 
 
 @dataclass
@@ -339,17 +342,263 @@ def respond_to_escalation(world: FactoryWorld, escalation: WatcherEscalation,
                              final=RunStatus.FAILED)
 
     _mark_actions_verified(world, escalation.incident_id, result.passed)
+
+    # ── N4: production optimisation after verified containment ───────────
+    # Maintenance VERIFIED does not mean the factory is healthy: CNC-class
+    # containment usually strands a paused job. The same coordinator now hands
+    # off across agents (persisted like every other step).
+    if options.skip_optimisation:
+        final = recorder.transition(
+            run_id, status, RunStatus.VERIFIED, agent=AgentRole.COORDINATOR,
+            summary=(f"Maintenance containment complete: "
+                     f"{result.passed_count}/{len(result.checks)} checks passed"))
+        outcome = (f"{escalation.machine_id} contained for {escalation.incident_id}. "
+                   f"{assessment.probable_issue}. Actions: "
+                   + ", ".join(kind.value for kind in actions)
+                   + f". Model: {model.info.provider}/{model.info.name} "
+                     f"({model.info.mode.value}).")
+        recorder.finish(run_id, final, outcome)
+        return RunOutcome(run_id=run_id, status=final.value, outcome=outcome,
+                          steps=repo.list_agent_steps(world.conn, run_id))
+
+    return _optimise_after_containment(
+        world, recorder, run_id, status, escalation, ctx, model, actions,
+        assessment)
+
+
+def _optimise_after_containment(
+    world: FactoryWorld, recorder: RunRecorder, run_id: str, status: RunStatus,
+    escalation: WatcherEscalation, ctx: ToolContext, model: AgentModel,
+    contained_actions: list[ActionKind], assessment: MaintenanceAssessment,
+) -> RunOutcome:
+    """N4 cross-agent phase: detect disruption → production → finance → act.
+
+    Entered only after maintenance containment verified. The coordinator asks "
+    is production disrupted?" deterministically (any job left PAUSED on the
+    contained machine), then hands off: Production/Loss evaluates alternatives,
+    Finance prices them, the reconciled decision goes through the optimisation
+    action policy and — if allowed — the reroute tool, then verification #2.
+    """
+    from . import finance as finance_agent
+    from . import production as production_agent
+    from .optimisation import (
+        evaluate_optimisation_policy as policy_fn,
+    )
+    from .optimisation import verify_optimisation
+
+    status = recorder.transition(
+        run_id, status, RunStatus.PLANNING, agent=AgentRole.COORDINATOR,
+        summary="Maintenance containment VERIFIED; checking production disruption")
+
+    machine_id = escalation.machine_id
+    paused_ids = [job["job_id"] for job in world.get_active_jobs_all()
+                  if job["machine_id"] == machine_id and job["status"] == "PAUSED"]
+    if not paused_ids:
+        recorder.step(
+            run_id, agent=AgentRole.COORDINATOR, type=StepType.DECISION,
+            summary=f"No production job is disrupted by the {machine_id} "
+                    "containment — nothing to optimise",
+            status="NONE")
+        return _finish_verified(world, recorder, run_id, status, escalation,
+                                contained_actions, assessment, model_info=model.info,
+                                extra="No production disruption; containment "
+                                      "completed the response.")
+
+    job_id = paused_ids[0]
+    ctx.phase_machine_id = machine_id
+    ctx.phase_paused_job_id = job_id
+    recorder.step(
+        run_id, agent=AgentRole.COORDINATOR, type=StepType.HANDOFF,
+        summary=f"Production disrupted: {job_id} PAUSED on {machine_id} "
+                "— assigning Production/Loss Agent",
+        output={"job_id": job_id})
+
+    # ── Production/Loss Agent (model call: 1 in real mode) ───────────────
+    try:
+        production = production_agent.assess(
+            world, ctx, model, job_id=job_id,
+            on_event=_step_bridge(recorder, run_id, AgentRole.PRODUCTION))
+    except MalformedOutputError as exc:
+        return _escalate(world, recorder, run_id, status,
+                         f"production agent produced invalid output: {exc}")
+    recorder.step(
+        run_id, agent=AgentRole.PRODUCTION, type=StepType.DECISION,
+        summary=(f"Production assessment: "
+                 f"{production.recommended_candidate or 'no candidate — wait'} "
+                 f"({production.confidence} confidence); idle cost "
+                 f"{production.operational_loss_if_idle_usd} USD"),
+        output=production.model_dump())
+
+    # ── Factory Finance Agent (model call: 1 in real mode) ───────────────
+    finance = finance_agent.evaluate(
+        world, ctx, model, job_id=job_id,
+        candidate_machine_id=production.recommended_candidate,
+        on_event=_step_bridge(recorder, run_id, AgentRole.FINANCE))
+    recorder.step(
+        run_id, agent=AgentRole.FINANCE, type=StepType.DECISION,
+        summary=(f"Finance: {finance.recommendation} — net benefit "
+                 f"{finance.net_benefit_usd} USD "
+                 f"(avoided {finance.estimated_loss_avoided_usd} USD)"),
+        output=finance.model_dump())
+
+    # ── Reconciliation + deterministic optimisation policy ───────────────
+    optimisation, reasons, blockers = policy_fn(
+        world, job_id=job_id, production=production, finance=finance)
+    recorder.step(
+        run_id, agent=AgentRole.COORDINATOR, type=StepType.POLICY,
+        summary=("Optimisation policy ALLOWED: " + "; ".join(reasons))
+        if optimisation.action == "REROUTE_PRODUCTION_JOB"
+        else ("Optimisation policy BLOCKED/WAIT: "
+              + ("; ".join(blockers) or "finance/production support absent")),
+        output=optimisation.model_dump(),
+        status="ALLOWED" if optimisation.action == "REROUTE_PRODUCTION_JOB"
+        else "BLOCKED")
+
+    if optimisation.action != "REROUTE_PRODUCTION_JOB":
+        if optimisation.approval_required:
+            return _escalate(
+                world, recorder, run_id, status,
+                "optimisation needs human approval: "
+                + ("; ".join(blockers)),
+                transition_from=status)
+        return _finish_verified(
+            world, recorder, run_id, status, escalation, contained_actions,
+            assessment, model_info=model.info,
+            extra="Production stays paused pending the repair: "
+                  + ("; ".join(blockers) or "no economically positive reroute"))
+
+    # ── ACT: the controlled reroute ────────────────────────────────────
+    status = recorder.transition(
+        run_id, status, RunStatus.ACTION_PENDING, agent=AgentRole.COORDINATOR,
+        summary="Coordinator reconciled operational + financial recommendations")
+    status = recorder.transition(
+        run_id, status, RunStatus.ACTING, agent=AgentRole.COORDINATOR,
+        summary=f"Executing {ActionKind.REROUTE_PRODUCTION_JOB.value}: "
+                f"{job_id} → {optimisation.target_machine}")
+
+    from .tools import execute_tool as _exec
+
+    args = {"job_id": job_id, "target_machine_id": optimisation.target_machine,
+            "reason": optimisation.reason_summary[:400]}
+    reroute_result = _exec(ctx, ACTION_TOOL_NAMES[ActionKind.REROUTE_PRODUCTION_JOB],
+                           args)
+    recorder.step(
+        run_id, agent=AgentRole.COORDINATOR, type=StepType.ACTION,
+        summary=(f"REROUTE {job_id} → {optimisation.target_machine} ok"
+                 if reroute_result.ok else
+                 f"REROUTE FAILED: {reroute_result.error}"),
+        tool_name=ACTION_TOOL_NAMES[ActionKind.REROUTE_PRODUCTION_JOB],
+        input=args, output=reroute_result.output if reroute_result.ok
+        else reroute_result.error,
+        status="OK" if reroute_result.ok else "FAILED")
+    if not reroute_result.ok:
+        # One deterministic retry on the SAME validated plan (never a new plan).
+        status = recorder.transition(
+            run_id, status, RunStatus.RECOVERING, agent=AgentRole.COORDINATOR,
+            summary="Reroute tool failed; retrying once")
+        reroute_result = _exec(ctx, ACTION_TOOL_NAMES[ActionKind.REROUTE_PRODUCTION_JOB],
+                               args)
+        recorder.step(
+            run_id, agent=AgentRole.COORDINATOR, type=StepType.RECOVERY,
+            summary=("reroute retry ok"
+                     if reroute_result.ok else f"reroute retry failed: {reroute_result.error}"),
+            status="OK" if reroute_result.ok else "FAILED")
+        if not reroute_result.ok:
+            return _escalate(world, recorder, run_id, status,
+                             "reroute failed after one retry",
+                             transition_from=RunStatus.RECOVERING)
+
+    _record_action_ledger(
+        world, recorder, run_id, escalation, ActionKind.REROUTE_PRODUCTION_JOB,
+        args, reroute_result)
+
+    # ── VERIFY stage #2: did the reroute happen and pay off? ─────────────
+    status = recorder.transition(
+        run_id, status, RunStatus.VERIFYING, agent=AgentRole.COORDINATOR,
+        summary="Verifying the optimisation against persisted world state")
+    net = finance.net_benefit_usd
+    verify = verify_optimisation(
+        world, job_id=job_id,
+        target_machine_id=optimisation.target_machine,
+        expected_net_benefit_usd=net)
+    recorder.step(
+        run_id, agent=AgentRole.COORDINATOR, type=StepType.VERIFICATION,
+        summary=f"{verify.passed_count}/{len(verify.checks)} optimisation checks "
+                "passed — FACTORY OPTIMISED" if verify.passed else
+                f"{verify.passed_count}/{len(verify.checks)} optimisation checks "
+                "passed — VERIFY FAILED",
+        output={"checks": [c.model_dump() for c in verify.checks],
+                "passed": verify.passed},
+        status="PASS" if verify.passed else "FAIL")
+    if not verify.passed:
+        return _escalate(world, recorder, run_id, status,
+                         "optimisation verification failed",
+                         transition_from=RunStatus.VERIFYING,
+                         final=RunStatus.FAILED)
+    _mark_reroute_verified(world, job_id)
+
     final = recorder.transition(
         run_id, status, RunStatus.VERIFIED, agent=AgentRole.COORDINATOR,
-        summary=f"Run complete: {result.passed_count}/{len(result.checks)} checks passed")
-    outcome = (f"{escalation.machine_id} contained for {escalation.incident_id}. "
-               f"{assessment.probable_issue}. Actions: "
-               + ", ".join(kind.value for kind in actions)
-               + f". Model: {model.info.provider}/{model.info.name} "
-                 f"({model.info.mode.value}).")
+        summary=(f"Factory optimised: maintenance contained, {job_id} rerouted "
+                 f"to {optimisation.target_machine}, net benefit "
+                 f"{net} USD"))
+    outcome = (
+        f"{escalation.machine_id} contained for {escalation.incident_id}; "
+        f"{job_id} rerouted to {optimisation.target_machine} "
+        f"(net benefit {net} USD). "
+        f"Model: {model.info.provider}/{model.info.name} "
+        f"({model.info.mode.value}).")
     recorder.finish(run_id, final, outcome)
     return RunOutcome(run_id=run_id, status=final.value, outcome=outcome,
                       steps=repo.list_agent_steps(world.conn, run_id))
+
+
+def _finish_verified(world, recorder, run_id, status, escalation, actions,
+                     assessment, *, model_info, extra: str) -> RunOutcome:
+    """Shared happy-ending path (containment-only or contain+wait)."""
+    final = recorder.transition(
+        run_id, status, RunStatus.VERIFIED, agent=AgentRole.COORDINATOR,
+        summary="Run complete")
+    outcome = (f"{escalation.machine_id} contained for {escalation.incident_id}. "
+               f"{assessment.probable_issue}. Actions: "
+               + ", ".join(kind.value for kind in actions)
+               + f". {extra} Model: {model_info.provider}/{model_info.name} "
+                 f"({model_info.mode.value}).")
+    recorder.finish(run_id, final, outcome)
+    return RunOutcome(run_id=run_id, status=final.value, outcome=outcome,
+                      steps=repo.list_agent_steps(world.conn, run_id))
+
+
+def _mark_reroute_verified(world: FactoryWorld, job_id: str) -> None:
+    for action in world.get_actions():
+        if (action.get("action_type") == ActionKind.REROUTE_PRODUCTION_JOB.value
+                and job_id in (action.get("payload") or "")):
+            world.set_action_verification(action["action_id"], "PASSED")
+
+
+def _record_action_ledger(
+    world: FactoryWorld, recorder: RunRecorder, run_id: str,
+    escalation: WatcherEscalation, kind: ActionKind, args: dict[str, Any],
+    result: ToolResult) -> None:
+    """Ledger the reroute exactly like the containment actions (provenance)."""
+    action_id = world.next_id("actions", "action_id", "ACT")
+    payload = {"run_id": run_id, "tool_args": args, **result.output}
+    world.record_action({
+        "action_id": action_id,
+        "incident_id": escalation.incident_id,
+        "action_type": kind.value,
+        "proposed_by": f"FACTORA_AGENT/{run_id}",
+        "payload": json.dumps(payload, sort_keys=True, default=str),
+        "risk_level": "low",
+        "approval_required": 0,
+        "approval_state": "APPROVED",
+        "executed_at": world.clock().iso(),
+        "verification_state": "PENDING",
+        "result": "executed",
+    })
+    recorder.step(run_id, agent=AgentRole.COORDINATOR, type=StepType.ACTION,
+                  summary=f"ledgered {action_id} for {kind.value}",
+                  tool_name=ACTION_TOOL_NAMES[kind], output={"action_id": action_id})
 
 
 def _assign_specialist(model: AgentModel, escalation: WatcherEscalation,

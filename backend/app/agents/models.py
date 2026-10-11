@@ -43,8 +43,8 @@ ALLOWED_TRANSITIONS: dict[RunStatus, frozenset[RunStatus]] = {
     RunStatus.ACTING: frozenset(
         {RunStatus.VERIFYING, RunStatus.RECOVERING, RunStatus.ESCALATED}),
     RunStatus.VERIFYING: frozenset(
-        {RunStatus.VERIFIED, RunStatus.RECOVERING, RunStatus.FAILED,
-         RunStatus.ESCALATED}),
+        {RunStatus.VERIFIED, RunStatus.RECOVERING, RunStatus.PLANNING,
+         RunStatus.FAILED, RunStatus.ESCALATED}),
     RunStatus.RECOVERING: frozenset(
         {RunStatus.ACTING, RunStatus.VERIFYING, RunStatus.ESCALATED,
          RunStatus.FAILED}),
@@ -70,6 +70,8 @@ class AgentRole(StrEnum):
     WATCHER = "watcher"
     COORDINATOR = "coordinator"
     MAINTENANCE = "maintenance"
+    PRODUCTION = "production"       # N4: production/loss optimisation
+    FINANCE = "finance"             # N4: factory finance (runtime product agent)
 
 
 class ActionKind(StrEnum):
@@ -77,6 +79,7 @@ class ActionKind(StrEnum):
 
     CREATE_URGENT_WORK_ORDER = "CREATE_URGENT_WORK_ORDER"
     PLACE_IN_MAINTENANCE = "PLACE_IN_MAINTENANCE"
+    REROUTE_PRODUCTION_JOB = "REROUTE_PRODUCTION_JOB"   # N4: containment recovery
 
 
 AUTONOMOUS_ACTION_KINDS = frozenset(ActionKind)
@@ -85,6 +88,7 @@ AUTONOMOUS_ACTION_KINDS = frozenset(ActionKind)
 ACTION_TOOL_NAMES: dict[ActionKind, str] = {
     ActionKind.CREATE_URGENT_WORK_ORDER: "create_maintenance_work_order",
     ActionKind.PLACE_IN_MAINTENANCE: "place_machine_in_maintenance",
+    ActionKind.REROUTE_PRODUCTION_JOB: "reroute_production_job",
 }
 
 # Deterministic execution order: the repair must be on the board *before* the
@@ -92,6 +96,9 @@ ACTION_TOOL_NAMES: dict[ActionKind, str] = {
 ACTION_ORDER: dict[ActionKind, int] = {
     ActionKind.CREATE_URGENT_WORK_ORDER: 0,
     ActionKind.PLACE_IN_MAINTENANCE: 1,
+    # N4: reroute runs in the optimisation phase, after maintenance VERIFIES —
+    # never in the containment batch.
+    ActionKind.REROUTE_PRODUCTION_JOB: 9,
 }
 
 
@@ -159,6 +166,47 @@ class ToolExecutionError(RuntimeError):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+# ── N4: production / finance / optimisation contracts ──────────────────
+
+class ProductionAssessment(BaseModel):
+    """Production/Loss agent output after evaluating the paused job."""
+
+    paused_job_id: str
+    remaining_quantity: int = Field(ge=0)
+    candidates: list[dict[str, Any]] = Field(default_factory=list, max_length=12)
+    recommended_candidate: str | None = None
+    est_run_hours_on_recommended: float | None = None
+    est_incremental_cost_usd: float | None = Field(default=None, ge=0)
+    expected_delay_hours: float | None = Field(default=None, ge=0)
+    operational_loss_if_idle_usd: float = Field(ge=0)
+    loss_avoided_usd: float | None = Field(default=None, ge=0)
+    confidence: Literal["low", "medium", "high"]
+    summary: str = Field(min_length=8, max_length=900)
+
+
+class FinanceAssessment(BaseModel):
+    """Factory Finance agent output after pricing the alternatives."""
+
+    baseline_do_nothing_cost_usd: float = Field(ge=0)
+    candidate_action_cost_usd: float = Field(ge=0)
+    estimated_loss_avoided_usd: float = Field(ge=0)
+    net_benefit_usd: float
+    recommendation: Literal["REROUTE", "WAIT"]
+    rationale: str = Field(min_length=8, max_length=900)
+
+
+class OptimisationDecision(BaseModel):
+    """Coordinator's reconciled cross-agent decision (N4)."""
+
+    action: Literal["REROUTE_PRODUCTION_JOB", "WAIT_FOR_REPAIR"]
+    target_machine: str | None = None
+    job_id: str
+    reason_summary: str = Field(min_length=8, max_length=900)
+    production_supported: bool
+    finance_supported: bool
+    approval_required: bool = False
 
 
 # ── policy + verification ──────────────────────────────────────────────────
